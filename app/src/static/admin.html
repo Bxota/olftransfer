@@ -1,0 +1,165 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>OlfTransfer — Admin</title>
+  <link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+
+  <header class="header">
+    <a href="/" class="logo">
+      <div class="logo-icon">
+        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5">
+          <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/>
+          <polyline points="17 8 12 3 7 8"/>
+          <line x1="12" y1="3" x2="12" y2="15"/>
+        </svg>
+      </div>
+      <span class="logo-name">OlfTransfer</span>
+    </a>
+    <div class="header-actions">
+      <a href="/" class="btn btn-ghost btn-sm">Retour</a>
+      <button class="btn btn-ghost btn-sm" id="logoutBtn">Déconnexion</button>
+    </div>
+  </header>
+
+  <main class="page">
+    <div class="page-narrow">
+
+      <!-- Inviter un utilisateur -->
+      <div class="card">
+        <div class="card-body">
+          <p class="section-label">Inviter un utilisateur</p>
+          <form id="inviteForm">
+            <div class="field">
+              <label for="email">Adresse email</label>
+              <input type="email" id="email" placeholder="ami@exemple.com" autofocus>
+            </div>
+            <div id="invite-error" class="alert alert-error mt-3 hidden"></div>
+            <div id="invite-success" class="hidden mt-3">
+              <div class="alert alert-success" id="invite-success-msg"></div>
+              <div class="share-box mt-3" id="invite-link-box" style="display:none">
+                <span class="share-link" id="invite-link"></span>
+                <button class="copy-btn" id="invite-copy">Copier</button>
+              </div>
+            </div>
+            <button type="submit" class="btn btn-primary btn-full mt-4" id="inviteBtn">
+              Envoyer l'invitation
+            </button>
+          </form>
+        </div>
+      </div>
+
+      <!-- Liste des utilisateurs -->
+      <div class="card mt-4">
+        <div class="card-body">
+          <p class="section-label">Utilisateurs</p>
+          <ul class="file-list" id="userList">
+            <li class="text-subtext" style="padding:12px 0">Chargement…</li>
+          </ul>
+        </div>
+      </div>
+
+    </div>
+  </main>
+
+  <script>
+    // Vérifier que l'utilisateur est admin
+    fetch('/auth/me').then(r => {
+      if (!r.ok) { window.location.href = '/login'; return; }
+      return r.json();
+    }).then(user => {
+      if (user && !user.is_admin) window.location.href = '/';
+    });
+
+    // Charger les utilisateurs
+    async function loadUsers() {
+      const res = await fetch('/admin/users');
+      if (!res.ok) return;
+      const users = await res.json();
+      const list = document.getElementById('userList');
+      list.innerHTML = users.map(u => `
+        <li class="file-item">
+          <div class="file-type-icon">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/>
+              <circle cx="12" cy="7" r="4"/>
+            </svg>
+          </div>
+          <div class="file-info">
+            <div class="file-name">${u.email}</div>
+            <div class="file-size">${u.is_admin ? 'Admin · ' : ''}Membre depuis ${new Date(u.created_at).toLocaleDateString('fr-FR')}</div>
+          </div>
+        </li>
+      `).join('');
+    }
+
+    loadUsers();
+
+    // Formulaire invitation
+    document.getElementById('inviteForm').addEventListener('submit', async (e) => {
+      e.preventDefault();
+      const btn = document.getElementById('inviteBtn');
+      const err = document.getElementById('invite-error');
+      const success = document.getElementById('invite-success');
+      err.classList.add('hidden');
+      success.classList.add('hidden');
+      btn.disabled = true;
+      btn.textContent = 'Envoi…';
+
+      try {
+        const res = await fetch('/admin/invite', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ email: document.getElementById('email').value }),
+        });
+        const data = await res.json();
+
+        if (res.ok) {
+          const msg = document.getElementById('invite-success-msg');
+          const linkBox = document.getElementById('invite-link-box');
+          const linkEl = document.getElementById('invite-link');
+
+          if (data.smtp_error) {
+            msg.textContent = `Email non envoyé (SMTP non configuré). Partage ce lien manuellement :`;
+            linkBox.style.display = 'flex';
+            linkEl.textContent = data.invite_url;
+          } else {
+            msg.textContent = `Invitation envoyée à ${document.getElementById('email').value} !`;
+            linkBox.style.display = 'none';
+          }
+          success.classList.remove('hidden');
+          document.getElementById('email').value = '';
+          loadUsers();
+        } else {
+          err.textContent = data.detail;
+          err.classList.remove('hidden');
+        }
+      } catch {
+        err.textContent = 'Erreur réseau.';
+        err.classList.remove('hidden');
+      } finally {
+        btn.disabled = false;
+        btn.textContent = "Envoyer l'invitation";
+      }
+    });
+
+    // Copier le lien
+    document.getElementById('invite-copy').addEventListener('click', () => {
+      navigator.clipboard.writeText(document.getElementById('invite-link').textContent).then(() => {
+        const btn = document.getElementById('invite-copy');
+        btn.textContent = 'Copié !';
+        btn.classList.add('copied');
+        setTimeout(() => { btn.textContent = 'Copier'; btn.classList.remove('copied'); }, 2000);
+      });
+    });
+
+    document.getElementById('logoutBtn').addEventListener('click', async () => {
+      await fetch('/auth/logout', { method: 'POST' });
+      window.location.href = '/login';
+    });
+  </script>
+</body>
+</html>

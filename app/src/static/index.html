@@ -1,0 +1,129 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>OlfTransfer — Envoyer des fichiers</title>
+  <link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+
+  <header class="header">
+    <a href="/" class="logo">
+      <div class="logo-icon">
+        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5">
+          <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/>
+          <polyline points="17 8 12 3 7 8"/>
+          <line x1="12" y1="3" x2="12" y2="15"/>
+        </svg>
+      </div>
+      <span class="logo-name">OlfTransfer</span>
+    </a>
+    <div class="header-actions" id="headerActions">
+      <button class="btn btn-ghost btn-sm" id="logoutBtn">Déconnexion</button>
+    </div>
+  </header>
+
+  <main class="page">
+    <div class="page-narrow">
+
+      <!-- Étape 1 : sélection des fichiers -->
+      <div id="step-select">
+        <div class="card">
+          <div class="card-body">
+            <div class="dropzone" id="dropzone">
+              <input type="file" id="fileInput" multiple>
+              <div class="dropzone-icon">
+                <svg width="40" height="40" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
+                  <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/>
+                  <polyline points="17 8 12 3 7 8"/>
+                  <line x1="12" y1="3" x2="12" y2="15"/>
+                </svg>
+              </div>
+              <h2>Déposer vos fichiers ici</h2>
+              <p>ou <span class="browse">parcourir</span> depuis votre appareil</p>
+            </div>
+          </div>
+
+          <!-- Liste des fichiers -->
+          <div class="card-body hidden" id="file-list-section">
+            <p class="section-label">Fichiers sélectionnés</p>
+            <ul class="file-list" id="fileList"></ul>
+            <button class="btn btn-outline btn-sm mt-4" id="addMoreBtn">+ Ajouter des fichiers</button>
+          </div>
+
+          <!-- Options -->
+          <div class="card-body hidden" id="options-section">
+            <p class="section-label">Options</p>
+            <div class="options-grid">
+              <div class="field">
+                <label for="expiry">Expiration</label>
+                <select id="expiry">
+                  <option value="24">1 jour</option>
+                  <option value="72">3 jours</option>
+                  <option value="168" selected>7 jours</option>
+                  <option value="336">14 jours</option>
+                  <option value="720">30 jours</option>
+                </select>
+              </div>
+              <div class="field">
+                <label for="maxDownloads">Téléchargements max</label>
+                <input type="number" id="maxDownloads" placeholder="Illimité" min="1">
+              </div>
+              <div class="field" style="grid-column: 1 / -1;">
+                <label for="password">Mot de passe (optionnel)</label>
+                <input type="password" id="password" placeholder="Protéger par mot de passe">
+              </div>
+            </div>
+          </div>
+
+          <!-- Action -->
+          <div class="card-body hidden" id="action-section">
+            <div id="error" class="alert alert-error hidden mt-0 mb-3" style="margin-bottom:12px"></div>
+            <button class="btn btn-primary btn-full" id="sendBtn">
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5">
+                <line x1="22" y1="2" x2="11" y2="13"/>
+                <polygon points="22 2 15 22 11 13 2 9 22 2"/>
+              </svg>
+              Envoyer
+            </button>
+          </div>
+        </div>
+      </div>
+
+      <!-- Étape 2 : upload en cours -->
+      <div id="step-uploading" class="hidden">
+        <div class="card">
+          <div class="card-body">
+            <p class="section-label">Envoi en cours</p>
+            <ul class="file-list" id="progressList"></ul>
+          </div>
+        </div>
+      </div>
+
+      <!-- Étape 3 : lien de partage -->
+      <div id="step-done" class="hidden">
+        <div class="card">
+          <div class="card-body text-center">
+            <div style="width:52px;height:52px;background:#F0FDF4;border-radius:50%;display:flex;align-items:center;justify-content:center;margin:0 auto 16px;">
+              <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="#10B981" stroke-width="2.5">
+                <polyline points="20 6 9 17 4 12"/>
+              </svg>
+            </div>
+            <h2 style="font-size:18px;font-weight:700;margin-bottom:6px;">Transfert prêt !</h2>
+            <p class="text-subtext" style="margin-bottom:20px;">Partagez ce lien avec vos destinataires.</p>
+            <div class="share-box">
+              <span class="share-link" id="shareLink"></span>
+              <button class="copy-btn" id="copyBtn">Copier</button>
+            </div>
+            <button class="btn btn-outline btn-full mt-4" id="newTransferBtn">Nouveau transfert</button>
+          </div>
+        </div>
+      </div>
+
+    </div>
+  </main>
+
+  <script src="/static/upload.js"></script>
+</body>
+</html>

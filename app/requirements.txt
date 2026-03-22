@@ -1,2 +1,7 @@
 fastapi==0.115.6
 uvicorn[standard]==0.34.0
+psycopg2-binary==2.9.10
+boto3==1.37.18
+apscheduler==3.10.4
+itsdangerous==2.2.0
+bcrypt==4.0.1

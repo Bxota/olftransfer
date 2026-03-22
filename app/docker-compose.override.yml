@@ -1,0 +1,70 @@
+services:
+  app:
+    build: .
+    ports:
+      - "8000:8000"
+    environment:
+      R2_ENDPOINT: http://minio:9000
+      R2_PUBLIC_ENDPOINT: http://localhost:9000
+      R2_ACCESS_KEY_ID: minioadmin
+      R2_SECRET_ACCESS_KEY: minioadmin
+      R2_BUCKET_NAME: olftransfer
+      ADMIN_PASSWORD: ${ADMIN_PASSWORD}
+      ADMIN_EMAIL: ${ADMIN_EMAIL}
+      BASE_URL: http://localhost:8000
+      SMTP_HOST: ${SMTP_HOST}
+      SMTP_PORT: ${SMTP_PORT}
+      SMTP_USER: ${SMTP_USER}
+      SMTP_PASSWORD: ${SMTP_PASSWORD}
+      SMTP_FROM: ${SMTP_FROM}
+    networks:
+      - internal
+    depends_on:
+      - postgres
+      - minio
+
+  postgres:
+    ports:
+      - "5432:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+      - ../infra/roles/postgres/files/schema.sql:/docker-entrypoint-initdb.d/schema.sql:ro
+
+  minio:
+    image: minio/minio
+    container_name: olftransfer-minio
+    command: server /data --console-address ":9001"
+    environment:
+      MINIO_ROOT_USER: minioadmin
+      MINIO_ROOT_PASSWORD: minioadmin
+    ports:
+      - "9000:9000"
+      - "9001:9001"
+    volumes:
+      - miniodata:/data
+    networks:
+      - internal
+      - devnet
+
+  createbuckets:
+    image: minio/mc
+    networks:
+      - internal
+      - devnet
+    depends_on:
+      - minio
+    entrypoint: >
+      /bin/sh -c "
+      sleep 3;
+      mc alias set local http://minio:9000 minioadmin minioadmin;
+      mc mb --ignore-existing local/olftransfer;
+      mc anonymous set download local/olftransfer;
+      exit 0;
+      "
+
+volumes:
+  miniodata:
+
+networks:
+  devnet:
+    driver: bridge

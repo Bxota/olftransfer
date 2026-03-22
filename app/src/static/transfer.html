@@ -1,0 +1,97 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>OlfTransfer — Téléchargement</title>
+  <link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+
+  <header class="header">
+    <a href="/" class="logo">
+      <div class="logo-icon">
+        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5">
+          <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/>
+          <polyline points="17 8 12 3 7 8"/>
+          <line x1="12" y1="3" x2="12" y2="15"/>
+        </svg>
+      </div>
+      <span class="logo-name">OlfTransfer</span>
+    </a>
+  </header>
+
+  <main class="page">
+    <div class="page-narrow">
+
+      <!-- Chargement -->
+      <div id="state-loading" class="text-center text-subtext">Chargement…</div>
+
+      <!-- Mot de passe requis -->
+      <div id="state-password" class="hidden">
+        <div class="card">
+          <div class="card-body">
+            <h2 style="font-size:17px;font-weight:700;margin-bottom:6px;">Transfert protégé</h2>
+            <p class="text-subtext" style="margin-bottom:20px;">Ce transfert est protégé par un mot de passe.</p>
+            <div class="field">
+              <label for="passwordInput">Mot de passe</label>
+              <input type="password" id="passwordInput" placeholder="••••••••" autofocus>
+            </div>
+            <div id="pw-error" class="alert alert-error mt-3 hidden"></div>
+            <button class="btn btn-primary btn-full mt-4" id="unlockBtn">Déverrouiller</button>
+          </div>
+        </div>
+      </div>
+
+      <!-- Transfert expiré / introuvable -->
+      <div id="state-error" class="hidden">
+        <div class="card">
+          <div class="card-body text-center">
+            <div style="width:52px;height:52px;background:#FEF2F2;border-radius:50%;display:flex;align-items:center;justify-content:center;margin:0 auto 16px;">
+              <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="#EF4444" stroke-width="2.5">
+                <circle cx="12" cy="12" r="10"/>
+                <line x1="12" y1="8" x2="12" y2="12"/>
+                <line x1="12" y1="16" x2="12.01" y2="16"/>
+              </svg>
+            </div>
+            <h2 style="font-size:18px;font-weight:700;margin-bottom:6px;" id="error-title">Transfert introuvable</h2>
+            <p class="text-subtext" id="error-msg">Ce lien n'existe pas ou a expiré.</p>
+          </div>
+        </div>
+      </div>
+
+      <!-- Fichiers disponibles -->
+      <div id="state-ready" class="hidden">
+        <div class="transfer-header">
+          <h1 class="transfer-title" id="transfer-title">Transfert</h1>
+          <p class="transfer-meta">
+            <span id="meta-count"></span>
+            <span id="meta-expiry"></span>
+            <span id="meta-downloads"></span>
+          </p>
+        </div>
+
+        <div class="card">
+          <div class="card-body">
+            <p class="section-label">Fichiers</p>
+            <ul class="file-list" id="downloadList"></ul>
+          </div>
+          <div class="card-body">
+            <button class="btn btn-primary btn-full" id="downloadAllBtn">
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5">
+                <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/>
+                <polyline points="7 10 12 15 17 10"/>
+                <line x1="12" y1="15" x2="12" y2="3"/>
+              </svg>
+              Tout télécharger
+            </button>
+          </div>
+        </div>
+      </div>
+
+    </div>
+  </main>
+
+  <script src="/static/download.js"></script>
+</body>
+</html>
