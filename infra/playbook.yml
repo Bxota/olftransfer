@@ -5,7 +5,7 @@
 
   vars:
     app_dir: /opt/olftransfer
-    image: ghcr.io/{{ lookup('env', 'GITHUB_REPOSITORY') | default('Bxota') }}
+    image: ghcr.io/{{ lookup('env', 'GITHUB_REPOSITORY') | default('bxota') }}
     image_tag: "{{ image_tag | default('latest') }}"
 
   roles:

@@ -1,6 +1,6 @@
 services:
   app:
-    image: ghcr.io/${GITHUB_REPOSITORY:-Bxota}:${IMAGE_TAG:-latest}
+    image: ghcr.io/${GITHUB_REPOSITORY:-bxota}:${IMAGE_TAG:-latest}
     restart: unless-stopped
     ports:
       - "127.0.0.1:8000:8000"
