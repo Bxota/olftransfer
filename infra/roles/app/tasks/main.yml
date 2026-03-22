@@ -12,7 +12,7 @@
     dest: "{{ app_dir }}/docker-compose.yml"
     mode: "0644"
 
-- name: Pull latest image and restart app
+- name: Start containers
   shell: >
     doppler run
     --token {{ doppler_token }}
@@ -22,3 +22,18 @@
   environment:
     IMAGE_TAG: "{{ image_tag }}"
     GITHUB_REPOSITORY: "bxota/olftransfer"
+
+- name: Wait for PostgreSQL to be ready
+  shell: >
+    docker exec olftransfer-postgres
+    pg_isready -U olftransfer
+  register: pg_ready
+  retries: 10
+  delay: 3
+  until: pg_ready.rc == 0
+
+- name: Run migrations
+  shell: >
+    docker exec -i olftransfer-postgres
+    psql -U olftransfer -d olftransfer
+    < {{ app_dir }}/schema.sql
