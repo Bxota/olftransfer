@@ -1,6 +1,7 @@
 services:
   app:
     image: ghcr.io/${GITHUB_REPOSITORY:-bxota/olftransfer}:${IMAGE_TAG:-latest}
+    container_name: olftransfer-app
     restart: unless-stopped
     environment:
       DATABASE_URL: ${DATABASE_URL}
@@ -19,6 +20,7 @@ services:
 
   postgres:
     image: postgres:16-alpine
+    container_name: olftransfer-postgres
     restart: unless-stopped
     environment:
       POSTGRES_DB: olftransfer
