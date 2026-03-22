@@ -1,9 +1,7 @@
 services:
   app:
-    image: ghcr.io/${GITHUB_REPOSITORY:-bxota}:${IMAGE_TAG:-latest}
+    image: ghcr.io/${GITHUB_REPOSITORY:-bxota/olftransfer}:${IMAGE_TAG:-latest}
     restart: unless-stopped
-    ports:
-      - "127.0.0.1:8000:8000"
     environment:
       DATABASE_URL: ${DATABASE_URL}
       R2_ACCESS_KEY_ID: ${R2_ACCESS_KEY_ID}
@@ -12,7 +10,10 @@ services:
       R2_ENDPOINT: ${R2_ENDPOINT}
       APP_SECRET: ${APP_SECRET}
     networks:
-      - olftransfer
+      caddy_net:
+        aliases:
+          - olftransfer_app
+      internal:
     depends_on:
       - postgres
 
@@ -26,11 +27,14 @@ services:
     volumes:
       - pgdata:/var/lib/postgresql/data
     networks:
-      - olftransfer
+      - internal
 
 volumes:
   pgdata:
 
 networks:
-  olftransfer:
+  caddy_net:
+    name: caddy_net
     external: true
+  internal:
+    internal: true

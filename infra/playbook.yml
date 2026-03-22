@@ -9,6 +9,6 @@
     image_tag: "{{ image_tag | default('latest') }}"
 
   roles:
-    - nginx
+    - caddy
     - postgres
     - app
