@@ -1,0 +1,38 @@
+---
+- name: Install Doppler CLI
+  shell: |
+    curl -sLf --retry 3 --tlsv1.2 --proto "=https" \
+      'https://packages.doppler.com/public/cli/gpg.DE2A7741A397C129.key' \
+      | gpg --dearmor -o /usr/share/keyrings/doppler-archive-keyring.gpg
+    echo "deb [sign-by=/usr/share/keyrings/doppler-archive-keyring.gpg] \
+      https://packages.doppler.com/public/cli/deb/debian any-version main" \
+      | tee /etc/apt/sources.list.d/doppler-cli.list
+    apt-get update && apt-get install -y doppler
+  args:
+    creates: /usr/bin/doppler
+
+- name: Install Docker SDK for Python (required by community.docker)
+  pip:
+    name: docker
+    state: present
+
+- name: Ensure Docker network exists
+  community.docker.docker_network:
+    name: olftransfer
+    state: present
+
+- name: Copy docker-compose.yml
+  copy:
+    src: "{{ playbook_dir }}/../app/docker-compose.yml"
+    dest: "{{ app_dir }}/docker-compose.yml"
+    mode: "0644"
+
+- name: Pull latest image and restart app
+  shell: >
+    doppler run
+    --token {{ doppler_token }}
+    --project olftransfer
+    --config prd
+    -- docker compose -f {{ app_dir }}/docker-compose.yml up -d --pull always
+  environment:
+    IMAGE_TAG: "{{ image_tag }}"

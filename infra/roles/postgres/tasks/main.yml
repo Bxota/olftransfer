@@ -1,0 +1,48 @@
+---
+- name: Ensure app directory exists
+  file:
+    path: "{{ app_dir }}"
+    state: directory
+    mode: "0755"
+
+- name: Create postgres data directory
+  file:
+    path: "{{ app_dir }}/pgdata"
+    state: directory
+    mode: "0700"
+
+- name: Start PostgreSQL container
+  community.docker.docker_container:
+    name: olftransfer-postgres
+    image: postgres:16-alpine
+    state: started
+    restart_policy: unless-stopped
+    env:
+      POSTGRES_DB: olftransfer
+      POSTGRES_USER: olftransfer
+      POSTGRES_PASSWORD: "{{ lookup('env', 'POSTGRES_PASSWORD') }}"
+    volumes:
+      - "{{ app_dir }}/pgdata:/var/lib/postgresql/data"
+    networks:
+      - name: olftransfer
+
+- name: Wait for PostgreSQL to be ready
+  community.docker.docker_container_exec:
+    container: olftransfer-postgres
+    command: pg_isready -U olftransfer
+  register: pg_ready
+  retries: 10
+  delay: 3
+  until: pg_ready.rc == 0
+
+- name: Copy migration SQL
+  copy:
+    src: schema.sql
+    dest: "{{ app_dir }}/schema.sql"
+    mode: "0644"
+
+- name: Run migrations
+  community.docker.docker_container_exec:
+    container: olftransfer-postgres
+    command: psql -U olftransfer -d olftransfer -f /tmp/schema.sql
+  # Idempotent: uses CREATE TABLE IF NOT EXISTS

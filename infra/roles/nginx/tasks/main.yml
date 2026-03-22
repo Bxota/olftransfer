@@ -1,0 +1,26 @@
+---
+- name: Install Nginx
+  apt:
+    name: nginx
+    state: present
+    update_cache: true
+
+- name: Deploy share.bxota.com config
+  template:
+    src: share.bxota.com.conf.j2
+    dest: /etc/nginx/sites-available/share.bxota.com
+    mode: "0644"
+  notify: Reload Nginx
+
+- name: Enable site
+  file:
+    src: /etc/nginx/sites-available/share.bxota.com
+    dest: /etc/nginx/sites-enabled/share.bxota.com
+    state: link
+  notify: Reload Nginx
+
+- name: Ensure Nginx is running
+  service:
+    name: nginx
+    state: started
+    enabled: true

@@ -1,0 +1,36 @@
+services:
+  app:
+    image: ghcr.io/${GITHUB_REPOSITORY:-Bxota}:${IMAGE_TAG:-latest}
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:8000:8000"
+    environment:
+      DATABASE_URL: ${DATABASE_URL}
+      R2_ACCESS_KEY_ID: ${R2_ACCESS_KEY_ID}
+      R2_SECRET_ACCESS_KEY: ${R2_SECRET_ACCESS_KEY}
+      R2_BUCKET_NAME: ${R2_BUCKET_NAME}
+      R2_ENDPOINT: ${R2_ENDPOINT}
+      APP_SECRET: ${APP_SECRET}
+    networks:
+      - olftransfer
+    depends_on:
+      - postgres
+
+  postgres:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: olftransfer
+      POSTGRES_USER: olftransfer
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    networks:
+      - olftransfer
+
+volumes:
+  pgdata:
+
+networks:
+  olftransfer:
+    external: true
