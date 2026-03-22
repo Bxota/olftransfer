@@ -1,25 +1,10 @@
 ---
 - name: Install Doppler CLI
   shell: |
-    curl -sLf --retry 3 --tlsv1.2 --proto "=https" \
-      'https://packages.doppler.com/public/cli/gpg.DE2A7741A397C129.key' \
-      | gpg --dearmor -o /usr/share/keyrings/doppler-archive-keyring.gpg
-    echo "deb [sign-by=/usr/share/keyrings/doppler-archive-keyring.gpg] \
-      https://packages.doppler.com/public/cli/deb/debian any-version main" \
-      | tee /etc/apt/sources.list.d/doppler-cli.list
-    apt-get update && apt-get install -y doppler
+    curl -Ls --tlsv1.2 --proto "=https" --retry 3 \
+      https://cli.doppler.com/install.sh | sh
   args:
-    creates: /usr/bin/doppler
-
-- name: Install Docker SDK for Python (required by community.docker)
-  pip:
-    name: docker
-    state: present
-
-- name: Ensure Docker network exists
-  community.docker.docker_network:
-    name: olftransfer
-    state: present
+    creates: /usr/local/bin/doppler
 
 - name: Copy docker-compose.yml
   copy:
@@ -36,3 +21,4 @@
     -- docker compose -f {{ app_dir }}/docker-compose.yml up -d --pull always
   environment:
     IMAGE_TAG: "{{ image_tag }}"
+    GITHUB_REPOSITORY: "bxota/olftransfer"

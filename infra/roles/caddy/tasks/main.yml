@@ -1,10 +1,10 @@
 ---
-- name: Add share.bxota.com block to Caddyfile
+- name: Add olf-transfer.bxota.com block to Caddyfile
   blockinfile:
     path: /opt/caddy/Caddyfile
     marker: "# {mark} olftransfer"
     block: |
-      share.bxota.com {
+      olf-transfer.bxota.com {
           reverse_proxy olftransfer_app:8000
       }
   notify: Reload Caddy
