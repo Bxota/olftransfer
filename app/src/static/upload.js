@@ -142,6 +142,7 @@ async function send() {
     const linkEl = document.getElementById('shareLink');
     linkEl.textContent = transfer.share_url;
     linkEl.href = transfer.share_url;
+    loadHistory();
 
   } catch (err) {
     document.getElementById('step-select').classList.remove('hidden');
@@ -201,6 +202,90 @@ function uploadFile(file, url, index) {
     xhr.send(file);
   });
 }
+
+// ── Historique ────────────────────────────────────────────────────────────────
+
+async function loadHistory() {
+  const content = document.getElementById('historyContent');
+  try {
+    const res = await fetch('/transfers');
+    if (!res.ok) throw new Error();
+    const transfers = await res.json();
+
+    if (transfers.length === 0) {
+      content.innerHTML = '<div class="card-body" style="padding-top:0;color:var(--subtext);font-size:13px;text-align:center;">Aucun transfert pour le moment.</div>';
+      return;
+    }
+
+    content.innerHTML = transfers.map(t => {
+      const filenames = t.files.map(f => escapeHtml(f.filename)).join(', ');
+      const totalSize = t.files.reduce((s, f) => s + f.size_bytes, 0);
+      const expiresAt = new Date(t.expires_at);
+      const createdAt = new Date(t.created_at);
+
+      let statusHtml;
+      const limitReached = t.max_downloads && t.download_count >= t.max_downloads;
+      if (t.is_expired) {
+        statusHtml = '<span class="history-badge history-badge--expired">Expiré</span>';
+      } else if (limitReached) {
+        statusHtml = '<span class="history-badge history-badge--expired">Limite atteinte</span>';
+      } else {
+        statusHtml = '<span class="history-badge history-badge--active">Actif</span>';
+      }
+
+      const dlLabel = t.max_downloads
+        ? `${t.download_count} / ${t.max_downloads}`
+        : `${t.download_count}`;
+
+      const canCopy = !t.is_expired && !limitReached;
+
+      return `
+        <div class="history-item">
+          <div class="history-main">
+            <div class="history-files">${filenames}</div>
+            <div class="history-meta">
+              <span>${formatSize(totalSize)}</span>
+              <span>Créé le ${formatDate(createdAt)}</span>
+              <span>${t.is_expired ? 'Expiré le' : 'Expire le'} ${formatDate(expiresAt)}</span>
+              ${t.has_password ? '<span>🔒 Protégé</span>' : ''}
+            </div>
+          </div>
+          <div class="history-right">
+            ${statusHtml}
+            <span class="history-dl" title="Téléchargements">
+              <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
+              ${dlLabel}
+            </span>
+            ${canCopy ? `<button class="copy-btn history-copy" data-url="${escapeHtml(t.share_url)}">Copier</button>` : ''}
+          </div>
+        </div>
+      `;
+    }).join('');
+
+    content.querySelectorAll('.history-copy').forEach(btn => {
+      btn.addEventListener('click', () => {
+        navigator.clipboard.writeText(btn.dataset.url).then(() => {
+          btn.textContent = 'Copié !';
+          btn.classList.add('copied');
+          setTimeout(() => { btn.textContent = 'Copier'; btn.classList.remove('copied'); }, 2000);
+        });
+      });
+    });
+  } catch {
+    content.innerHTML = '<div class="card-body" style="padding-top:0;color:var(--subtext);font-size:13px;text-align:center;">Impossible de charger l\'historique.</div>';
+  }
+}
+
+function escapeHtml(str) {
+  return String(str).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+}
+
+function formatDate(d) {
+  return d.toLocaleDateString('fr-FR', { day: '2-digit', month: 'short', year: 'numeric' });
+}
+
+document.getElementById('refreshHistoryBtn').addEventListener('click', loadHistory);
+loadHistory();
 
 // ── Copier le lien ────────────────────────────────────────────────────────────
 

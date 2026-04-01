@@ -271,6 +271,53 @@ body {
 .login-title { font-size: 18px; font-weight: 700; margin-bottom: 6px; }
 .login-sub { font-size: 14px; color: var(--subtext); margin-bottom: 28px; }
 
+/* ── History ── */
+.history-item {
+  display: flex; align-items: center; gap: 12px;
+  padding: 14px 28px;
+  border-top: 1px solid var(--border);
+}
+
+.history-main { flex: 1; min-width: 0; }
+
+.history-files {
+  font-size: 14px; font-weight: 500;
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+  margin-bottom: 3px;
+}
+
+.history-meta {
+  font-size: 12px; color: var(--subtext);
+  display: flex; flex-wrap: wrap; gap: 0;
+}
+.history-meta span + span::before { content: "·"; margin: 0 5px; }
+
+.history-right {
+  display: flex; align-items: center; gap: 8px; flex-shrink: 0;
+}
+
+.history-badge {
+  font-size: 11px; font-weight: 600; padding: 3px 8px;
+  border-radius: 20px; white-space: nowrap;
+}
+.history-badge--active { background: #F0FDF4; color: #166534; }
+.history-badge--expired { background: #FEF2F2; color: #991B1B; }
+
+.history-dl {
+  font-size: 12px; color: var(--subtext);
+  display: flex; align-items: center; gap: 4px; white-space: nowrap;
+}
+
+.history-copy {
+  flex-shrink: 0; padding: 5px 10px;
+  border-radius: 7px; font-size: 12px; font-weight: 500;
+  background: var(--primary); color: white;
+  border: none; cursor: pointer;
+  transition: background .15s;
+}
+.history-copy:hover { background: var(--primary-dark); }
+.history-copy.copied { background: var(--success); }
+
 /* ── Utils ── */
 .hidden { display: none !important; }
 .mt-2 { margin-top: 8px; }

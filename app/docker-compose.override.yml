@@ -68,3 +68,6 @@ volumes:
 networks:
   devnet:
     driver: bridge
+  caddy_net:
+    external: false
+    driver: bridge

@@ -28,6 +28,7 @@ from .models import (
     FileInfo,
     TransferInfo,
     UploadUrl,
+    UserTransfer,
 )
 from .r2 import presigned_download_url, presigned_upload_url
 
@@ -269,6 +270,44 @@ def create_transfer(body: CreateTransferRequest, user: dict = Depends(get_curren
         expires_at=expires_at,
         uploads=uploads,
     )
+
+
+@app.get("/transfers", response_model=list[UserTransfer])
+def list_my_transfers(user: dict = Depends(get_current_user)):
+    now = datetime.now(timezone.utc)
+    with get_conn() as conn:
+        cur = conn.cursor()
+        cur.execute(
+            """
+            SELECT id, token, created_at, expires_at, download_count, max_downloads,
+                   password_hash IS NOT NULL AS has_password
+            FROM transfers WHERE user_id = %s ORDER BY created_at DESC
+            """,
+            (user["id"],),
+        )
+        transfers = cur.fetchall()
+
+        result = []
+        for t in transfers:
+            t_id, token, created_at, expires_at, dl_count, max_dl, has_pw = t
+            cur.execute(
+                "SELECT filename, size_bytes, mime_type FROM files WHERE transfer_id = %s",
+                (t_id,),
+            )
+            files = [FileInfo(filename=r[0], size_bytes=r[1], mime_type=r[2]) for r in cur.fetchall()]
+            expires_aware = expires_at.replace(tzinfo=timezone.utc) if expires_at.tzinfo is None else expires_at
+            result.append(UserTransfer(
+                token=token,
+                share_url=f"{BASE_URL}/t/{token}",
+                created_at=created_at,
+                expires_at=expires_at,
+                is_expired=expires_aware < now,
+                download_count=dl_count,
+                max_downloads=max_dl,
+                has_password=has_pw,
+                files=files,
+            ))
+    return result
 
 
 @app.get("/transfers/{token}", response_model=TransferInfo)

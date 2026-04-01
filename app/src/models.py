@@ -50,3 +50,15 @@ class DownloadUrl(BaseModel):
 
 class DownloadResponse(BaseModel):
     files: list[DownloadUrl]
+
+
+class UserTransfer(BaseModel):
+    token: str
+    share_url: str
+    created_at: datetime
+    expires_at: datetime
+    is_expired: bool
+    download_count: int
+    max_downloads: int | None
+    has_password: bool
+    files: list[FileInfo]

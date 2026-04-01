@@ -122,6 +122,27 @@
       </div>
 
     </div>
+
+    <!-- Historique des transferts -->
+    <div class="page-narrow" style="margin-top: 32px;">
+      <div class="card" id="historyCard">
+        <div class="card-body" style="display:flex;align-items:center;justify-content:space-between;padding-bottom:16px;">
+          <p class="section-label" style="margin-bottom:0;">Mes transferts</p>
+          <button class="btn btn-ghost btn-sm" id="refreshHistoryBtn" title="Actualiser">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5">
+              <polyline points="23 4 23 10 17 10"/><polyline points="1 20 1 14 7 14"/>
+              <path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"/>
+            </svg>
+          </button>
+        </div>
+        <div id="historyContent">
+          <div class="card-body" style="padding-top:0;color:var(--subtext);font-size:13px;text-align:center;" id="historyEmpty">
+            Chargement…
+          </div>
+        </div>
+      </div>
+    </div>
+
   </main>
 
   <script src="/static/upload.js"></script>
