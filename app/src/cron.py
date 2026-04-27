@@ -23,15 +23,19 @@ def _do_cleanup():
             SELECT f.r2_key
             FROM files f
             JOIN transfers t ON f.transfer_id = t.id
-            WHERE t.expires_at < NOW()
+            WHERE t.expires_at < NOW() AND t.files_purged_at IS NULL
         """)
         r2_keys = [row[0] for row in cur.fetchall()]
+
+        logger.info(f"Cleanup: found {len(r2_keys)} R2 object(s) to delete")
 
         if r2_keys:
             delete_objects(r2_keys)
 
-        cur.execute("DELETE FROM transfers WHERE expires_at < NOW()")
-        deleted = cur.rowcount
+        cur.execute("""
+            UPDATE transfers SET files_purged_at = NOW()
+            WHERE expires_at < NOW() AND files_purged_at IS NULL
+        """)
+        purged = cur.rowcount
 
-        if deleted:
-            logger.info(f"Cleaned up {deleted} expired transfer(s), {len(r2_keys)} R2 object(s)")
+        logger.info(f"Cleanup: purged {purged} expired transfer(s), {len(r2_keys)} R2 object(s)")

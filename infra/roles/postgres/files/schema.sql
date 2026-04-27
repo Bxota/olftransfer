@@ -51,3 +51,14 @@ BEGIN
         ALTER TABLE transfers ADD COLUMN user_id UUID REFERENCES users(id);
     END IF;
 END $$;
+
+-- Migration : ajouter files_purged_at pour conserver l'historique après expiration
+DO $$
+BEGIN
+    IF NOT EXISTS (
+        SELECT 1 FROM information_schema.columns
+        WHERE table_name = 'transfers' AND column_name = 'files_purged_at'
+    ) THEN
+        ALTER TABLE transfers ADD COLUMN files_purged_at TIMESTAMP;
+    END IF;
+END $$;

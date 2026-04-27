@@ -61,7 +61,14 @@ def presigned_download_url(r2_key: str, filename: str, expires: int = 3600) -> s
 def delete_objects(r2_keys: list[str]) -> None:
     if not r2_keys:
         return
-    get_client().delete_objects(
-        Bucket=_bucket(),
-        Delete={"Objects": [{"Key": k} for k in r2_keys]},
-    )
+    # R2/S3 delete_objects accepts max 1000 keys per call
+    for i in range(0, len(r2_keys), 1000):
+        batch = r2_keys[i:i + 1000]
+        response = get_client().delete_objects(
+            Bucket=_bucket(),
+            Delete={"Objects": [{"Key": k} for k in batch]},
+        )
+        errors = response.get("Errors", [])
+        if errors:
+            details = ", ".join(f"{e['Key']}: {e['Code']} {e['Message']}" for e in errors)
+            raise RuntimeError(f"R2 delete_objects partial failure: {details}")
