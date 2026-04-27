@@ -30,7 +30,7 @@ from .models import (
     UploadUrl,
     UserTransfer,
 )
-from .r2 import presigned_download_url, presigned_upload_url
+from .r2 import delete_objects, presigned_download_url, presigned_upload_url
 
 STATIC_DIR = os.path.join(os.path.dirname(__file__), "static")
 BASE_URL = os.environ.get("BASE_URL", "https://olf-transfer.bxota.com")
@@ -311,6 +311,28 @@ def list_my_transfers(user: dict = Depends(get_current_user)):
                 files=files,
             ))
     return result
+
+
+@app.delete("/transfers/{token}", status_code=204)
+def delete_transfer(token: str, user: dict = Depends(get_current_user)):
+    with get_conn() as conn:
+        cur = conn.cursor()
+        cur.execute(
+            "SELECT id, files_purged_at FROM transfers WHERE token = %s AND user_id = %s",
+            (token, user["id"]),
+        )
+        row = cur.fetchone()
+        if not row:
+            raise HTTPException(status_code=404, detail="Transfer not found")
+
+        transfer_id, files_purged_at = row
+
+        if not files_purged_at:
+            cur.execute("SELECT r2_key FROM files WHERE transfer_id = %s", (transfer_id,))
+            r2_keys = [r[0] for r in cur.fetchall()]
+            delete_objects(r2_keys)
+
+        cur.execute("DELETE FROM transfers WHERE id = %s", (transfer_id,))
 
 
 @app.get("/transfers/{token}", response_model=TransferInfo)

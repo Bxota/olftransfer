@@ -240,7 +240,7 @@ async function loadHistory() {
       const canCopy = !t.is_expired && !limitReached;
 
       return `
-        <div class="history-item">
+        <div class="history-item" data-token="${escapeHtml(t.token)}">
           <div class="history-main">
             <div class="history-files">${filenames}</div>
             <div class="history-meta">
@@ -257,6 +257,9 @@ async function loadHistory() {
               ${dlLabel}
             </span>
             ${canCopy ? `<button class="copy-btn history-copy" data-url="${escapeHtml(t.share_url)}">Copier</button>` : ''}
+            <button class="history-delete" data-token="${escapeHtml(t.token)}" title="Supprimer">
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/><path d="M10 11v6"/><path d="M14 11v6"/><path d="M9 6V4h6v2"/></svg>
+            </button>
           </div>
         </div>
       `;
@@ -269,6 +272,24 @@ async function loadHistory() {
           btn.classList.add('copied');
           setTimeout(() => { btn.textContent = 'Copier'; btn.classList.remove('copied'); }, 2000);
         });
+      });
+    });
+
+    content.querySelectorAll('.history-delete').forEach(btn => {
+      btn.addEventListener('click', async () => {
+        if (!confirm('Supprimer ce transfert ? Cette action est irréversible.')) return;
+        btn.disabled = true;
+        try {
+          const res = await fetch(`/transfers/${btn.dataset.token}`, { method: 'DELETE' });
+          if (!res.ok) throw new Error();
+          btn.closest('.history-item').remove();
+          if (!content.querySelector('.history-item')) {
+            content.innerHTML = '<div class="card-body" style="padding-top:0;color:var(--subtext);font-size:13px;text-align:center;">Aucun transfert pour le moment.</div>';
+          }
+        } catch {
+          btn.disabled = false;
+          alert('Impossible de supprimer le transfert.');
+        }
       });
     });
   } catch {
