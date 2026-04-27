@@ -51,16 +51,19 @@ app.mount("/static", StaticFiles(directory=STATIC_DIR), name="static")
 
 # ── Pages HTML ────────────────────────────────────────────────────────────────
 
+NO_STORE = {"Cache-Control": "no-store"}
+
+
 @app.get("/", include_in_schema=False)
 def index_page(session: str | None = Cookie(default=None)):
     if not get_session_user_id(session):
-        return FileResponse(os.path.join(STATIC_DIR, "login.html"))
-    return FileResponse(os.path.join(STATIC_DIR, "index.html"))
+        return FileResponse(os.path.join(STATIC_DIR, "login.html"), headers=NO_STORE)
+    return FileResponse(os.path.join(STATIC_DIR, "index.html"), headers=NO_STORE)
 
 
 @app.get("/login", include_in_schema=False)
 def login_page():
-    return FileResponse(os.path.join(STATIC_DIR, "login.html"))
+    return FileResponse(os.path.join(STATIC_DIR, "login.html"), headers=NO_STORE)
 
 
 @app.get("/register", include_in_schema=False)
@@ -71,8 +74,8 @@ def register_page():
 @app.get("/admin", include_in_schema=False)
 def admin_page(session: str | None = Cookie(default=None)):
     if not get_session_user_id(session):
-        return FileResponse(os.path.join(STATIC_DIR, "login.html"))
-    return FileResponse(os.path.join(STATIC_DIR, "admin.html"))
+        return FileResponse(os.path.join(STATIC_DIR, "login.html"), headers=NO_STORE)
+    return FileResponse(os.path.join(STATIC_DIR, "admin.html"), headers=NO_STORE)
 
 
 @app.get("/t/{token}", include_in_schema=False)
