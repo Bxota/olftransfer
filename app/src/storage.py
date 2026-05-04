@@ -1,4 +1,5 @@
 import os
+import time
 import boto3
 from botocore.config import Config
 
@@ -134,6 +135,39 @@ def list_log_objects(prefix: str = "", max_keys: int = 200) -> list[dict]:
     for page in paginator.paginate(Bucket=bucket, Prefix=prefix, PaginationConfig={"MaxItems": max_keys}):
         objects.extend(page.get("Contents", []))
     return objects
+
+
+_bucket_stats_cache: dict | None = None
+_bucket_stats_ts: float = 0.0
+_CACHE_TTL = 300  # 5 minutes
+
+
+def get_bucket_stats(force_refresh: bool = False) -> dict:
+    global _bucket_stats_cache, _bucket_stats_ts
+    now = time.monotonic()
+    if not force_refresh and _bucket_stats_cache is not None and now - _bucket_stats_ts < _CACHE_TTL:
+        return {**_bucket_stats_cache, "from_cache": True}
+
+    total_bytes = 0
+    object_count = 0
+    last_modified = None
+
+    paginator = get_client().get_paginator("list_objects_v2")
+    for page in paginator.paginate(Bucket=_bucket()):
+        for obj in page.get("Contents", []):
+            total_bytes += obj["Size"]
+            object_count += 1
+            lm = obj["LastModified"]
+            if last_modified is None or lm > last_modified:
+                last_modified = lm
+
+    _bucket_stats_cache = {
+        "total_bytes": total_bytes,
+        "object_count": object_count,
+        "last_upload": last_modified.isoformat() if last_modified else None,
+    }
+    _bucket_stats_ts = now
+    return {**_bucket_stats_cache, "from_cache": False}
 
 
 def get_log_content(key: str) -> str:

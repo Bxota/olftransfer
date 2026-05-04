@@ -28,6 +28,19 @@
   <main class="page">
     <div class="page-narrow">
 
+      <!-- Statistiques -->
+      <div class="card">
+        <div class="card-body">
+          <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:16px">
+            <p class="section-label" style="margin:0">Statistiques</p>
+            <button class="btn btn-ghost btn-sm" id="refreshStatsBtn">Actualiser</button>
+          </div>
+          <div id="statsContent">
+            <p class="text-subtext" style="padding:8px 0;font-size:.875rem">Chargement…</p>
+          </div>
+        </div>
+      </div>
+
       <!-- Inviter un utilisateur -->
       <div class="card">
         <div class="card-body">
@@ -98,6 +111,90 @@
       return r.json();
     }).then(user => {
       if (user && !user.is_admin) window.location.href = '/';
+    });
+
+    // Statistiques
+    function formatBytes(b) {
+      if (b === null || b === undefined) return '—';
+      if (b === 0) return '0 o';
+      const u = ['o','Ko','Mo','Go','To'];
+      const i = Math.floor(Math.log(b) / Math.log(1024));
+      return (b / Math.pow(1024, i)).toFixed(i > 0 ? 1 : 0) + ' ' + u[i];
+    }
+
+    function kpiCard(label, value, sub) {
+      return `<div style="background:var(--bg);border:1px solid var(--border);border-radius:10px;padding:16px">
+        <div style="font-size:11px;font-weight:600;letter-spacing:.5px;text-transform:uppercase;color:var(--subtext);margin-bottom:6px">${label}</div>
+        <div style="font-size:22px;font-weight:700;color:var(--text)">${value}</div>
+        ${sub ? `<div style="font-size:12px;color:var(--subtext);margin-top:2px">${sub}</div>` : ''}
+      </div>`;
+    }
+
+    function renderStats(s) {
+      const s3Ok = s.s3.total_bytes !== null;
+      const phantomLabel = s.phantom_bytes > 0
+        ? `<span style="color:#F59E0B">${formatBytes(s.phantom_bytes)}</span>`
+        : `<span style="color:var(--success)">Aucun</span>`;
+
+      const lastUpload = s.s3.last_upload
+        ? new Date(s.s3.last_upload).toLocaleString('fr-FR')
+        : '—';
+
+      const grid = `
+        <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:10px;margin-bottom:20px">
+          ${kpiCard('Storage S3 réel', s3Ok ? formatBytes(s.s3.total_bytes) : '—', s3Ok ? `${s.s3.object_count} objet${s.s3.object_count > 1 ? 's' : ''}` : 'Erreur S3')}
+          ${kpiCard('Storage actif (DB)', formatBytes(s.db.active_bytes), 'fichiers non purgés')}
+          ${kpiCard('Transfers actifs', s.db.active_transfers, `sur ${s.db.total_transfers} au total`)}
+          ${kpiCard('Téléchargements', s.db.total_downloads, 'toutes périodes')}
+          ${kpiCard('Objets fantômes', s3Ok ? phantomLabel : '—', 'S3 − DB active')}
+          ${kpiCard('Dernier upload S3', s3Ok ? `<span style="font-size:13px">${lastUpload}</span>` : '—', '')}
+        </div>`;
+
+      const tableRows = s.users.map(u => `
+        <tr>
+          <td style="padding:8px 6px;font-size:.875rem">${escHtml(u.email)}</td>
+          <td style="padding:8px 6px;font-size:.875rem;text-align:right">${formatBytes(u.active_bytes)}</td>
+          <td style="padding:8px 6px;font-size:.875rem;text-align:right">${u.active_transfers} / ${u.total_transfers}</td>
+          <td style="padding:8px 6px;font-size:.875rem;text-align:right">${u.downloads}</td>
+        </tr>`).join('');
+
+      const table = `
+        <p class="section-label" style="margin-bottom:8px">Par utilisateur</p>
+        <div style="overflow-x:auto">
+          <table style="width:100%;border-collapse:collapse">
+            <thead>
+              <tr style="border-bottom:1px solid var(--border)">
+                <th style="padding:6px;font-size:11px;font-weight:600;text-align:left;color:var(--subtext)">Utilisateur</th>
+                <th style="padding:6px;font-size:11px;font-weight:600;text-align:right;color:var(--subtext)">Stockage actif</th>
+                <th style="padding:6px;font-size:11px;font-weight:600;text-align:right;color:var(--subtext)">Actifs / Total</th>
+                <th style="padding:6px;font-size:11px;font-weight:600;text-align:right;color:var(--subtext)">DL</th>
+              </tr>
+            </thead>
+            <tbody>${tableRows}</tbody>
+          </table>
+        </div>`;
+
+      const cacheNote = s.s3.from_cache
+        ? '<p style="font-size:.75rem;color:var(--subtext);margin-top:12px">Données S3 depuis le cache (TTL 5 min). Cliquer sur Actualiser pour forcer.</p>'
+        : '';
+
+      document.getElementById('statsContent').innerHTML = grid + table + cacheNote;
+    }
+
+    async function loadStats(refresh = false) {
+      const res = await fetch('/admin/stats' + (refresh ? '?refresh=true' : ''));
+      if (!res.ok) {
+        document.getElementById('statsContent').innerHTML = '<p class="text-subtext" style="font-size:.875rem">Erreur lors du chargement des statistiques.</p>';
+        return;
+      }
+      renderStats(await res.json());
+    }
+
+    loadStats();
+
+    document.getElementById('refreshStatsBtn').addEventListener('click', () => {
+      document.getElementById('statsContent').innerHTML = '<p class="text-subtext" style="padding:8px 0;font-size:.875rem">Chargement…</p>';
+      loadStats(true);
     });
 
     // Charger les utilisateurs

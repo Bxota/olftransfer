@@ -35,6 +35,7 @@ from .storage import (
     complete_multipart_upload,
     create_multipart_upload,
     delete_objects,
+    get_bucket_stats,
     get_log_content,
     list_log_objects,
     MULTIPART_THRESHOLD,
@@ -227,6 +228,82 @@ def list_users():
         cur.execute("SELECT email, is_admin, created_at FROM users ORDER BY created_at")
         rows = cur.fetchall()
     return [{"email": r[0], "is_admin": r[1], "created_at": r[2]} for r in rows]
+
+
+@app.get("/admin/stats", dependencies=[Depends(require_admin)])
+def admin_stats(refresh: bool = Query(default=False)):
+    with get_conn() as conn:
+        cur = conn.cursor()
+
+        cur.execute("""
+            SELECT COALESCE(SUM(f.size_bytes), 0)
+            FROM files f JOIN transfers t ON f.transfer_id = t.id
+            WHERE t.files_purged_at IS NULL AND t.confirmed_at IS NOT NULL
+        """)
+        db_active_bytes = int(cur.fetchone()[0])
+
+        cur.execute("SELECT COALESCE(SUM(size_bytes), 0) FROM files")
+        db_total_bytes = int(cur.fetchone()[0])
+
+        cur.execute("""
+            SELECT COUNT(*) FROM transfers
+            WHERE confirmed_at IS NOT NULL AND files_purged_at IS NULL AND expires_at > NOW()
+        """)
+        active_transfers = cur.fetchone()[0]
+
+        cur.execute("SELECT COUNT(*) FROM transfers WHERE confirmed_at IS NOT NULL")
+        total_transfers = cur.fetchone()[0]
+
+        cur.execute("""
+            SELECT COALESCE(SUM(download_count), 0) FROM transfers WHERE confirmed_at IS NOT NULL
+        """)
+        total_downloads = int(cur.fetchone()[0])
+
+        cur.execute("""
+            SELECT u.email,
+                   (SELECT COUNT(*) FROM transfers t
+                    WHERE t.user_id = u.id AND t.confirmed_at IS NOT NULL
+                    AND t.files_purged_at IS NULL AND t.expires_at > NOW()) AS active_transfers,
+                   (SELECT COUNT(*) FROM transfers t
+                    WHERE t.user_id = u.id AND t.confirmed_at IS NOT NULL) AS total_transfers,
+                   (SELECT COALESCE(SUM(f.size_bytes), 0) FROM files f
+                    JOIN transfers t ON f.transfer_id = t.id
+                    WHERE t.user_id = u.id AND t.files_purged_at IS NULL
+                    AND t.confirmed_at IS NOT NULL) AS active_bytes,
+                   (SELECT COALESCE(SUM(t.download_count), 0) FROM transfers t
+                    WHERE t.user_id = u.id AND t.confirmed_at IS NOT NULL) AS downloads
+            FROM users u ORDER BY active_bytes DESC
+        """)
+        users_stats = [
+            {
+                "email": r[0],
+                "active_transfers": r[1],
+                "total_transfers": r[2],
+                "active_bytes": int(r[3]),
+                "downloads": int(r[4]),
+            }
+            for r in cur.fetchall()
+        ]
+
+    try:
+        s3 = get_bucket_stats(force_refresh=refresh)
+    except Exception as e:
+        s3 = {"total_bytes": None, "object_count": None, "last_upload": None, "from_cache": False, "error": str(e)}
+
+    phantom = s3["total_bytes"] - db_active_bytes if s3["total_bytes"] is not None else None
+
+    return {
+        "s3": s3,
+        "db": {
+            "active_bytes": db_active_bytes,
+            "total_bytes": db_total_bytes,
+            "active_transfers": active_transfers,
+            "total_transfers": total_transfers,
+            "total_downloads": total_downloads,
+        },
+        "phantom_bytes": max(0, phantom) if phantom is not None else None,
+        "users": users_stats,
+    }
 
 
 @app.post("/admin/cleanup", dependencies=[Depends(require_admin)])
