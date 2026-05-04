@@ -4,11 +4,11 @@ services:
     ports:
       - "8000:8000"
     environment:
-      R2_ENDPOINT: http://minio:9000
-      R2_PUBLIC_ENDPOINT: http://localhost:9000
-      R2_ACCESS_KEY_ID: minioadmin
-      R2_SECRET_ACCESS_KEY: minioadmin
-      R2_BUCKET_NAME: olftransfer
+      S3_ENDPOINT: http://minio:9000
+      S3_PUBLIC_ENDPOINT: http://localhost:9000
+      S3_ACCESS_KEY_ID: minioadmin
+      S3_SECRET_ACCESS_KEY: minioadmin
+      S3_BUCKET_NAME: olftransfer
       ADMIN_PASSWORD: ${ADMIN_PASSWORD}
       ADMIN_EMAIL: ${ADMIN_EMAIL}
       BASE_URL: http://localhost:8000
