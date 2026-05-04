@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 """Run once to configure CORS on the S3 bucket."""
+
 import os
 
 import boto3
@@ -16,9 +17,7 @@ client = boto3.client(
 bucket = os.environ["S3_BUCKET_NAME"]
 raw_origins = os.environ.get("CORS_ALLOWED_ORIGINS", os.environ.get("BASE_URL", ""))
 allowed_origins = [
-    origin.strip().rstrip("/")
-    for origin in raw_origins.split(",")
-    if origin.strip()
+    origin.strip().rstrip("/") for origin in raw_origins.split(",") if origin.strip()
 ]
 
 if not allowed_origins:
