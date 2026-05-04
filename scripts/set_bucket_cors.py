@@ -4,6 +4,9 @@
 import os
 import sys
 
+# Add /app to path so we can import src module
+sys.path.insert(0, "/app")
+
 import boto3
 
 from src.storage import _s3_client_kwargs
