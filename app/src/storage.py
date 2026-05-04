@@ -58,6 +58,53 @@ def presigned_download_url(object_key: str, filename: str, expires: int = 3600) 
     )
 
 
+MULTIPART_THRESHOLD = 5 * 1024 * 1024   # 5 MB
+CHUNK_SIZE = 100 * 1024 * 1024          # 100 MB par partie
+
+
+def create_multipart_upload(object_key: str, mime_type: str | None) -> str:
+    params = {"Bucket": _bucket(), "Key": object_key}
+    if mime_type:
+        params["ContentType"] = mime_type
+    return get_client().create_multipart_upload(**params)["UploadId"]
+
+
+def presigned_upload_part(object_key: str, upload_id: str, part_number: int, expires: int = 3600) -> str:
+    return get_presign_client().generate_presigned_url(
+        "upload_part",
+        Params={
+            "Bucket": _bucket(),
+            "Key": object_key,
+            "UploadId": upload_id,
+            "PartNumber": part_number,
+        },
+        ExpiresIn=expires,
+    )
+
+
+def complete_multipart_upload(object_key: str, upload_id: str) -> None:
+    client = get_client()
+    parts = []
+    paginator = client.get_paginator("list_parts")
+    for page in paginator.paginate(Bucket=_bucket(), Key=object_key, UploadId=upload_id):
+        for part in page.get("Parts", []):
+            parts.append({"PartNumber": part["PartNumber"], "ETag": part["ETag"]})
+    parts.sort(key=lambda p: p["PartNumber"])
+    client.complete_multipart_upload(
+        Bucket=_bucket(),
+        Key=object_key,
+        UploadId=upload_id,
+        MultipartUpload={"Parts": parts},
+    )
+
+
+def abort_multipart_upload(object_key: str, upload_id: str) -> None:
+    try:
+        get_client().abort_multipart_upload(Bucket=_bucket(), Key=object_key, UploadId=upload_id)
+    except Exception:
+        pass
+
+
 def delete_objects(object_keys: list[str]) -> None:
     if not object_keys:
         return

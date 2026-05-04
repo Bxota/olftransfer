@@ -30,7 +30,18 @@ from .models import (
     UploadUrl,
     UserTransfer,
 )
-from .storage import delete_objects, get_log_content, list_log_objects, presigned_download_url, presigned_upload_url
+from .storage import (
+    abort_multipart_upload,
+    complete_multipart_upload,
+    create_multipart_upload,
+    delete_objects,
+    get_log_content,
+    list_log_objects,
+    MULTIPART_THRESHOLD,
+    presigned_download_url,
+    presigned_upload_part,
+    presigned_upload_url,
+)
 
 STATIC_DIR = os.path.join(os.path.dirname(__file__), "static")
 BASE_URL = os.environ.get("BASE_URL", "https://olf-transfer.bxota.com")
@@ -284,11 +295,19 @@ def create_transfer(body: CreateTransferRequest, user: dict = Depends(get_curren
                 (transfer_id, f.filename, f.size_bytes, f.mime_type, r2_key),
             )
             file_id = cur.fetchone()[0]
-            uploads.append(UploadUrl(
-                file_id=str(file_id),
-                filename=f.filename,
-                upload_url=presigned_upload_url(r2_key, f.mime_type),
-            ))
+            if f.size_bytes >= MULTIPART_THRESHOLD:
+                mp_upload_id = create_multipart_upload(r2_key, f.mime_type)
+                uploads.append(UploadUrl(
+                    file_id=str(file_id),
+                    filename=f.filename,
+                    multipart_upload_id=mp_upload_id,
+                ))
+            else:
+                uploads.append(UploadUrl(
+                    file_id=str(file_id),
+                    filename=f.filename,
+                    upload_url=presigned_upload_url(r2_key, f.mime_type),
+                ))
 
     return CreateTransferResponse(
         token=token,
@@ -296,6 +315,58 @@ def create_transfer(body: CreateTransferRequest, user: dict = Depends(get_curren
         expires_at=expires_at,
         uploads=uploads,
     )
+
+
+@app.post("/uploads/{file_id}/part-url")
+def get_part_url(file_id: str, body: dict, user: dict = Depends(get_current_user)):
+    upload_id = body.get("upload_id")
+    part_number = body.get("part_number")
+    if not upload_id or not isinstance(part_number, int):
+        raise HTTPException(status_code=422, detail="upload_id et part_number requis")
+    with get_conn() as conn:
+        cur = conn.cursor()
+        cur.execute(
+            "SELECT f.r2_key FROM files f JOIN transfers t ON f.transfer_id = t.id WHERE f.id = %s AND t.user_id = %s",
+            (file_id, user["id"]),
+        )
+        row = cur.fetchone()
+    if not row:
+        raise HTTPException(status_code=404)
+    return {"url": presigned_upload_part(row[0], upload_id, part_number)}
+
+
+@app.post("/uploads/{file_id}/complete", status_code=204)
+def complete_upload(file_id: str, body: dict, user: dict = Depends(get_current_user)):
+    upload_id = body.get("upload_id")
+    if not upload_id:
+        raise HTTPException(status_code=422, detail="upload_id requis")
+    with get_conn() as conn:
+        cur = conn.cursor()
+        cur.execute(
+            "SELECT f.r2_key FROM files f JOIN transfers t ON f.transfer_id = t.id WHERE f.id = %s AND t.user_id = %s",
+            (file_id, user["id"]),
+        )
+        row = cur.fetchone()
+    if not row:
+        raise HTTPException(status_code=404)
+    complete_multipart_upload(row[0], upload_id)
+
+
+@app.post("/uploads/{file_id}/abort", status_code=204)
+def abort_upload(file_id: str, body: dict, user: dict = Depends(get_current_user)):
+    upload_id = body.get("upload_id")
+    if not upload_id:
+        raise HTTPException(status_code=422, detail="upload_id requis")
+    with get_conn() as conn:
+        cur = conn.cursor()
+        cur.execute(
+            "SELECT f.r2_key FROM files f JOIN transfers t ON f.transfer_id = t.id WHERE f.id = %s AND t.user_id = %s",
+            (file_id, user["id"]),
+        )
+        row = cur.fetchone()
+    if not row:
+        raise HTTPException(status_code=404)
+    abort_multipart_upload(row[0], upload_id)
 
 
 @app.post("/transfers/{token}/confirm", status_code=204)

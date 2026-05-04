@@ -96,6 +96,49 @@ document.getElementById('newTransferBtn').addEventListener('click', () => {
   document.getElementById('step-done').classList.add('hidden');
 });
 
+const CHUNK_SIZE = 100 * 1024 * 1024; // 100 MB par partie
+
+// ── Session localStorage (reprise) ───────────────────────────────────────────
+
+function saveSession(transfer, fileList) {
+  const multipartFiles = transfer.uploads
+    .map((u, i) => u.multipart_upload_id ? {
+      file_id: u.file_id,
+      filename: u.filename,
+      upload_id: u.multipart_upload_id,
+      total_parts: Math.ceil(fileList[i].size / CHUNK_SIZE),
+      completed_parts: [],
+    } : null)
+    .filter(Boolean);
+  if (multipartFiles.length > 0) {
+    localStorage.setItem('mp_session', JSON.stringify({
+      token: transfer.token,
+      share_url: transfer.share_url,
+      files: multipartFiles,
+    }));
+  }
+}
+
+function getSession() {
+  try { return JSON.parse(localStorage.getItem('mp_session')); } catch { return null; }
+}
+
+function clearSession() {
+  localStorage.removeItem('mp_session');
+}
+
+function updateSessionProgress(fileId, completedParts) {
+  const session = getSession();
+  if (!session) return;
+  const f = session.files.find(f => f.file_id === String(fileId));
+  if (f) {
+    f.completed_parts = completedParts;
+    localStorage.setItem('mp_session', JSON.stringify(session));
+  }
+}
+
+// ── Send ─────────────────────────────────────────────────────────────────────
+
 async function send() {
   const errorEl = document.getElementById('error');
   errorEl.classList.add('hidden');
@@ -125,6 +168,9 @@ async function send() {
 
     const transfer = await res.json();
 
+    // Sauvegarder la session pour une éventuelle reprise
+    saveSession(transfer, files);
+
     // 2. Afficher la progression
     document.getElementById('step-select').classList.add('hidden');
     document.getElementById('step-uploading').classList.remove('hidden');
@@ -132,8 +178,7 @@ async function send() {
 
     // 3. Uploader chaque fichier
     for (let i = 0; i < files.length; i++) {
-      const { upload_url } = transfer.uploads[i];
-      await uploadFile(files[i], upload_url, i);
+      await uploadFile(files[i], transfer.uploads[i], i);
     }
 
     // 4. Confirmer le transfert (tous les uploads ont réussi)
@@ -141,6 +186,7 @@ async function send() {
     if (!confirmRes.ok) throw new Error('Erreur lors de la confirmation du transfert');
 
     // 5. Afficher le lien
+    clearSession();
     document.getElementById('step-uploading').classList.add('hidden');
     document.getElementById('step-done').classList.remove('hidden');
     const linkEl = document.getElementById('shareLink');
@@ -176,7 +222,14 @@ function renderProgressList() {
   `).join('');
 }
 
-function uploadFile(file, url, index) {
+function uploadFile(file, uploadInfo, index) {
+  if (uploadInfo.multipart_upload_id) {
+    return uploadFileMultipart(file, uploadInfo.file_id, uploadInfo.multipart_upload_id, index);
+  }
+  return uploadFileSingle(file, uploadInfo.upload_url, index);
+}
+
+function uploadFileSingle(file, url, index) {
   return new Promise((resolve, reject) => {
     const xhr = new XMLHttpRequest();
     xhr.open('PUT', url);
@@ -204,6 +257,79 @@ function uploadFile(file, url, index) {
 
     xhr.onerror = () => reject(new Error('Erreur réseau'));
     xhr.send(file);
+  });
+}
+
+async function uploadFileMultipart(file, fileId, uploadId, index) {
+  const totalParts = Math.ceil(file.size / CHUNK_SIZE);
+
+  // Charger la progression sauvegardée
+  const session = getSession();
+  const sessionFile = session?.files?.find(f => f.file_id === String(fileId));
+  let completedParts = sessionFile?.completed_parts ?? [];
+
+  for (let partNumber = 1; partNumber <= totalParts; partNumber++) {
+    if (completedParts.includes(partNumber)) {
+      const pct = Math.round((partNumber / totalParts) * 100);
+      document.getElementById(`bar-${index}`).style.width = `${pct}%`;
+      document.getElementById(`status-${index}`).textContent = `${pct}%`;
+      continue;
+    }
+
+    const urlRes = await fetch(`/uploads/${fileId}/part-url`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ upload_id: uploadId, part_number: partNumber }),
+    });
+    if (!urlRes.ok) throw new Error(`Impossible d'obtenir l'URL de la partie ${partNumber}`);
+    const { url } = await urlRes.json();
+
+    const start = (partNumber - 1) * CHUNK_SIZE;
+    const chunk = file.slice(start, start + CHUNK_SIZE);
+    await uploadPart(chunk, url, partNumber, totalParts, index);
+
+    completedParts = [...completedParts, partNumber];
+    updateSessionProgress(fileId, completedParts);
+  }
+
+  // Finaliser l'upload multipart côté S3
+  const completeRes = await fetch(`/uploads/${fileId}/complete`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ upload_id: uploadId }),
+  });
+  if (!completeRes.ok) throw new Error("Erreur lors de la finalisation de l'upload");
+
+  document.getElementById(`bar-${index}`).style.width = '100%';
+  const s = document.getElementById(`status-${index}`);
+  s.textContent = 'Envoyé';
+  s.className = 'file-status done';
+}
+
+function uploadPart(chunk, url, partNumber, totalParts, index) {
+  return new Promise((resolve, reject) => {
+    const xhr = new XMLHttpRequest();
+    xhr.open('PUT', url);
+
+    xhr.upload.onprogress = (e) => {
+      if (e.lengthComputable) {
+        const partPct = e.loaded / e.total;
+        const overallPct = Math.round(((partNumber - 1 + partPct) / totalParts) * 100);
+        document.getElementById(`bar-${index}`).style.width = `${overallPct}%`;
+        document.getElementById(`status-${index}`).textContent = `${overallPct}%`;
+      }
+    };
+
+    xhr.onload = () => {
+      if (xhr.status >= 200 && xhr.status < 300) {
+        resolve();
+      } else {
+        reject(new Error(`Erreur upload partie ${partNumber}: ${xhr.status}`));
+      }
+    };
+
+    xhr.onerror = () => reject(new Error(`Erreur réseau partie ${partNumber}`));
+    xhr.send(chunk);
   });
 }
 

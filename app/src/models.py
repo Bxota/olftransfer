@@ -18,7 +18,8 @@ class CreateTransferRequest(BaseModel):
 class UploadUrl(BaseModel):
     file_id: str
     filename: str
-    upload_url: str
+    upload_url: str | None = None
+    multipart_upload_id: str | None = None
 
 
 class CreateTransferResponse(BaseModel):
