@@ -72,3 +72,26 @@ def delete_objects(object_keys: list[str]) -> None:
         if errors:
             details = ", ".join(f"{e['Key']}: {e['Code']} {e['Message']}" for e in errors)
             raise RuntimeError(f"S3 delete_objects partial failure: {details}")
+
+
+def _logs_bucket() -> str | None:
+    return os.environ.get("S3_LOGS_BUCKET")
+
+
+def list_log_objects(prefix: str = "", max_keys: int = 200) -> list[dict]:
+    bucket = _logs_bucket()
+    if not bucket:
+        return []
+    paginator = get_client().get_paginator("list_objects_v2")
+    objects = []
+    for page in paginator.paginate(Bucket=bucket, Prefix=prefix, PaginationConfig={"MaxItems": max_keys}):
+        objects.extend(page.get("Contents", []))
+    return objects
+
+
+def get_log_content(key: str) -> str:
+    bucket = _logs_bucket()
+    if not bucket:
+        raise RuntimeError("S3_LOGS_BUCKET non configuré")
+    response = get_client().get_object(Bucket=bucket, Key=key)
+    return response["Body"].read().decode("utf-8", errors="replace")

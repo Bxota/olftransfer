@@ -30,7 +30,7 @@ from .models import (
     UploadUrl,
     UserTransfer,
 )
-from .storage import delete_objects, presigned_download_url, presigned_upload_url
+from .storage import delete_objects, get_log_content, list_log_objects, presigned_download_url, presigned_upload_url
 
 STATIC_DIR = os.path.join(os.path.dirname(__file__), "static")
 BASE_URL = os.environ.get("BASE_URL", "https://olf-transfer.bxota.com")
@@ -222,6 +222,29 @@ def list_users():
 def trigger_cleanup():
     _do_cleanup()
     return {"ok": True}
+
+
+@app.get("/admin/logs", dependencies=[Depends(require_admin)])
+def list_access_logs(prefix: str = Query(default="")):
+    objects = list_log_objects(prefix=prefix)
+    return [
+        {
+            "key": o["Key"],
+            "size": o["Size"],
+            "last_modified": o["LastModified"].isoformat(),
+        }
+        for o in sorted(objects, key=lambda x: x["LastModified"], reverse=True)
+    ]
+
+
+@app.get("/admin/logs/content", dependencies=[Depends(require_admin)])
+def get_access_log(key: str = Query(...)):
+    if not os.environ.get("S3_LOGS_BUCKET"):
+        raise HTTPException(status_code=503, detail="S3_LOGS_BUCKET non configuré")
+    try:
+        return {"key": key, "content": get_log_content(key)}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
 
 
 # ── API ───────────────────────────────────────────────────────────────────────
