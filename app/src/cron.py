@@ -23,7 +23,7 @@ def _do_cleanup():
             SELECT f.r2_key
             FROM files f
             JOIN transfers t ON f.transfer_id = t.id
-            WHERE t.expires_at < NOW() AND t.files_purged_at IS NULL
+            WHERE t.expires_at < NOW() AND t.files_purged_at IS NULL AND t.confirmed_at IS NOT NULL
         """)
         r2_keys = [row[0] for row in cur.fetchall()]
 
@@ -34,8 +34,17 @@ def _do_cleanup():
 
         cur.execute("""
             UPDATE transfers SET files_purged_at = NOW()
-            WHERE expires_at < NOW() AND files_purged_at IS NULL
+            WHERE expires_at < NOW() AND files_purged_at IS NULL AND confirmed_at IS NOT NULL
         """)
         purged = cur.rowcount
 
         logger.info(f"Cleanup: purged {purged} expired transfer(s), {len(r2_keys)} R2 object(s)")
+
+        # Supprimer les transfers non confirmés depuis plus de 2 heures (upload échoué)
+        cur.execute("""
+            DELETE FROM transfers
+            WHERE confirmed_at IS NULL AND created_at < NOW() - INTERVAL '2 hours'
+        """)
+        abandoned = cur.rowcount
+        if abandoned:
+            logger.info(f"Cleanup: deleted {abandoned} abandoned (unconfirmed) transfer(s)")

@@ -62,3 +62,16 @@ BEGIN
         ALTER TABLE transfers ADD COLUMN files_purged_at TIMESTAMP;
     END IF;
 END $$;
+
+-- Migration : confirmed_at NULL = upload en cours ou échoué, non visible
+DO $$
+BEGIN
+    IF NOT EXISTS (
+        SELECT 1 FROM information_schema.columns
+        WHERE table_name = 'transfers' AND column_name = 'confirmed_at'
+    ) THEN
+        ALTER TABLE transfers ADD COLUMN confirmed_at TIMESTAMP;
+        -- Les transferts existants sont considérés comme confirmés
+        UPDATE transfers SET confirmed_at = created_at WHERE confirmed_at IS NULL;
+    END IF;
+END $$;

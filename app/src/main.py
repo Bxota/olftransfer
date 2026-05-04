@@ -275,6 +275,18 @@ def create_transfer(body: CreateTransferRequest, user: dict = Depends(get_curren
     )
 
 
+@app.post("/transfers/{token}/confirm", status_code=204)
+def confirm_transfer(token: str, user: dict = Depends(get_current_user)):
+    with get_conn() as conn:
+        cur = conn.cursor()
+        cur.execute(
+            "UPDATE transfers SET confirmed_at = NOW() WHERE token = %s AND user_id = %s AND confirmed_at IS NULL",
+            (token, user["id"]),
+        )
+        if cur.rowcount == 0:
+            raise HTTPException(status_code=404, detail="Transfer not found or already confirmed")
+
+
 @app.get("/transfers", response_model=list[UserTransfer])
 def list_my_transfers(user: dict = Depends(get_current_user)):
     now = datetime.now(timezone.utc)
@@ -284,7 +296,7 @@ def list_my_transfers(user: dict = Depends(get_current_user)):
             """
             SELECT id, token, created_at, expires_at, download_count, max_downloads,
                    password_hash IS NOT NULL AS has_password
-            FROM transfers WHERE user_id = %s ORDER BY created_at DESC
+            FROM transfers WHERE user_id = %s AND confirmed_at IS NOT NULL ORDER BY created_at DESC
             """,
             (user["id"],),
         )
@@ -318,7 +330,7 @@ def delete_transfer(token: str, user: dict = Depends(get_current_user)):
     with get_conn() as conn:
         cur = conn.cursor()
         cur.execute(
-            "SELECT id, files_purged_at FROM transfers WHERE token = %s AND user_id = %s",
+            "SELECT id, files_purged_at FROM transfers WHERE token = %s AND user_id = %s AND confirmed_at IS NOT NULL",
             (token, user["id"]),
         )
         row = cur.fetchone()
@@ -340,7 +352,7 @@ def get_transfer(token: str):
     with get_conn() as conn:
         cur = conn.cursor()
         cur.execute(
-            "SELECT id, expires_at, download_count, max_downloads FROM transfers WHERE token = %s",
+            "SELECT id, expires_at, download_count, max_downloads FROM transfers WHERE token = %s AND confirmed_at IS NOT NULL",
             (token,),
         )
         row = cur.fetchone()
@@ -374,7 +386,7 @@ def download_transfer(token: str, password: str | None = Query(default=None)):
         cur.execute(
             """
             SELECT id, expires_at, password_hash, download_count, max_downloads
-            FROM transfers WHERE token = %s
+            FROM transfers WHERE token = %s AND confirmed_at IS NOT NULL
             """,
             (token,),
         )

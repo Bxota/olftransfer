@@ -136,7 +136,11 @@ async function send() {
       await uploadFile(files[i], upload_url, i);
     }
 
-    // 4. Afficher le lien
+    // 4. Confirmer le transfert (tous les uploads ont réussi)
+    const confirmRes = await fetch(`/transfers/${transfer.token}/confirm`, { method: 'POST' });
+    if (!confirmRes.ok) throw new Error('Erreur lors de la confirmation du transfert');
+
+    // 5. Afficher le lien
     document.getElementById('step-uploading').classList.add('hidden');
     document.getElementById('step-done').classList.remove('hidden');
     const linkEl = document.getElementById('shareLink');
