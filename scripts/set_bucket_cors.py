@@ -8,6 +8,7 @@ import sys
 sys.path.insert(0, "/app")
 
 import boto3
+from botocore.exceptions import ClientError
 
 from src.storage import _s3_client_kwargs
 
@@ -52,18 +53,29 @@ allowed_origins = [
 if not allowed_origins:
     raise RuntimeError("BASE_URL ou CORS_ALLOWED_ORIGINS doit être configuré")
 
-client.put_bucket_cors(
-    Bucket=bucket,
-    CORSConfiguration={
-        "CORSRules": [
-            {
-                "AllowedHeaders": ["*"],
-                "AllowedMethods": ["GET", "HEAD", "PUT"],
-                "AllowedOrigins": allowed_origins,
-                "MaxAgeSeconds": 3600,
-            }
-        ]
-    },
-)
+try:
+    client.put_bucket_cors(
+        Bucket=bucket,
+        CORSConfiguration={
+            "CORSRules": [
+                {
+                    "AllowedHeaders": ["*"],
+                    "AllowedMethods": ["GET", "HEAD", "PUT"],
+                    "AllowedOrigins": allowed_origins,
+                    "MaxAgeSeconds": 3600,
+                }
+            ]
+        },
+    )
+except ClientError as error:
+    error_code = error.response.get("Error", {}).get("Code", "Unknown")
+    error_message = error.response.get("Error", {}).get("Message", str(error))
+    if error_code in {"AccessDenied", "AllAccessDisabled", "SignatureDoesNotMatch"}:
+        print(
+            f"WARNING: unable to update bucket CORS ({error_code}): {error_message}",
+            file=sys.stderr,
+        )
+        sys.exit(0)
+    raise
 
 print(f"CORS configured on bucket '{bucket}' for origins: {', '.join(allowed_origins)}")
