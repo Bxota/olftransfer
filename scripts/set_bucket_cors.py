@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """Run once to configure CORS on the S3 bucket."""
 import os
+
 import boto3
 from botocore.config import Config
 
@@ -13,7 +14,15 @@ client = boto3.client(
 )
 
 bucket = os.environ["S3_BUCKET_NAME"]
-base_url = os.environ["BASE_URL"]  # ex: https://olf-transfer.bxota.com
+raw_origins = os.environ.get("CORS_ALLOWED_ORIGINS", os.environ.get("BASE_URL", ""))
+allowed_origins = [
+    origin.strip().rstrip("/")
+    for origin in raw_origins.split(",")
+    if origin.strip()
+]
+
+if not allowed_origins:
+    raise RuntimeError("BASE_URL ou CORS_ALLOWED_ORIGINS doit être configuré")
 
 client.put_bucket_cors(
     Bucket=bucket,
@@ -21,12 +30,12 @@ client.put_bucket_cors(
         "CORSRules": [
             {
                 "AllowedHeaders": ["*"],
-                "AllowedMethods": ["GET", "PUT"],
-                "AllowedOrigins": [base_url],
+                "AllowedMethods": ["GET", "HEAD", "PUT"],
+                "AllowedOrigins": allowed_origins,
                 "MaxAgeSeconds": 3600,
             }
         ]
     },
 )
 
-print(f"CORS configured on bucket '{bucket}' for origin '{base_url}'")
+print(f"CORS configured on bucket '{bucket}' for origins: {', '.join(allowed_origins)}")

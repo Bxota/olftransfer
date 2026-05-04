@@ -23,6 +23,9 @@
     IMAGE_TAG: "{{ image_tag }}"
     GITHUB_REPOSITORY: "bxota/olftransfer"
 
+- name: Apply bucket CORS
+  shell: docker exec olftransfer-app python /app/scripts/set_bucket_cors.py
+
 - name: Wait for PostgreSQL to be ready
   shell: >
     docker exec olftransfer-postgres
