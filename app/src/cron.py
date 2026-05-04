@@ -27,7 +27,7 @@ def _do_cleanup():
         """)
         r2_keys = [row[0] for row in cur.fetchall()]
 
-        logger.info(f"Cleanup: found {len(r2_keys)} R2 object(s) to delete")
+        logger.info(f"Cleanup: found {len(r2_keys)} S3 object(s) to delete")
 
         if r2_keys:
             delete_objects(r2_keys)
@@ -38,7 +38,9 @@ def _do_cleanup():
         """)
         purged = cur.rowcount
 
-        logger.info(f"Cleanup: purged {purged} expired transfer(s), {len(r2_keys)} R2 object(s)")
+        logger.info(
+            f"Cleanup: purged {purged} expired transfer(s), {len(r2_keys)} S3 object(s)"
+        )
 
         # Supprimer les transfers non confirmés depuis plus de 2 heures (upload échoué)
         cur.execute("""
@@ -47,4 +49,6 @@ def _do_cleanup():
         """)
         abandoned = cur.rowcount
         if abandoned:
-            logger.info(f"Cleanup: deleted {abandoned} abandoned (unconfirmed) transfer(s)")
+            logger.info(
+                f"Cleanup: deleted {abandoned} abandoned (unconfirmed) transfer(s)"
+            )

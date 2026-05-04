@@ -2,16 +2,42 @@
 """Run once to configure CORS on the S3 bucket."""
 
 import os
+import re
+from urllib.parse import urlparse
 
 import boto3
 from botocore.config import Config
 
+
+def _infer_region_name(endpoint_url: str) -> str:
+    explicit_region = os.environ.get("S3_REGION_NAME")
+    if explicit_region:
+        return explicit_region
+
+    host = urlparse(endpoint_url).hostname or ""
+    match = re.match(r"^s3\.([a-z0-9-]+)\.io\.cloud\.ovh\.net$", host)
+    if match:
+        return match.group(1)
+
+    return "us-east-1"
+
+
+def _s3_client_kwargs(endpoint_url: str) -> dict:
+    return {
+        "endpoint_url": endpoint_url,
+        "region_name": _infer_region_name(endpoint_url),
+        "aws_access_key_id": os.environ["S3_ACCESS_KEY_ID"],
+        "aws_secret_access_key": os.environ["S3_SECRET_ACCESS_KEY"],
+        "config": Config(
+            signature_version="s3v4",
+            s3={"addressing_style": os.environ.get("S3_ADDRESSING_STYLE", "path")},
+        ),
+    }
+
+
 client = boto3.client(
     "s3",
-    endpoint_url=os.environ["S3_ENDPOINT"],
-    aws_access_key_id=os.environ["S3_ACCESS_KEY_ID"],
-    aws_secret_access_key=os.environ["S3_SECRET_ACCESS_KEY"],
-    config=Config(signature_version="s3v4"),
+    **_s3_client_kwargs(os.environ["S3_ENDPOINT"]),
 )
 
 bucket = os.environ["S3_BUCKET_NAME"]
