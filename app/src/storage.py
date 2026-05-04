@@ -55,10 +55,14 @@ def _s3_client_kwargs(endpoint_url: str) -> dict:
     endpoint_url = endpoint_url.rstrip("/")
     region = _infer_region_name(endpoint_url)
     addressing_style = os.environ.get("S3_ADDRESSING_STYLE", "path")
-    
+
     import sys
-    print(f"DEBUG: S3 client config: endpoint={endpoint_url}, region={region}, style={addressing_style}", file=sys.stderr)
-    
+
+    print(
+        f"DEBUG: S3 client config: endpoint={endpoint_url}, region={region}, style={addressing_style}",
+        file=sys.stderr,
+    )
+
     return {
         "endpoint_url": endpoint_url,
         "region_name": region,
