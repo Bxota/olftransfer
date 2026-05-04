@@ -23,6 +23,9 @@
     IMAGE_TAG: "{{ image_tag }}"
     GITHUB_REPOSITORY: "bxota/olftransfer"
 
+- name: Debug S3 env vars in container
+  shell: docker exec olftransfer-app env | grep -E "S3_|DOPPLER_|BASE_URL|CORS" || true
+
 - name: Apply bucket CORS
   shell: docker exec olftransfer-app python /app/scripts/set_bucket_cors.py
 

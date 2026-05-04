@@ -2,38 +2,37 @@
 """Run once to configure CORS on the S3 bucket."""
 
 import os
-import re
-from urllib.parse import urlparse
+import sys
 
 import boto3
-from botocore.config import Config
 
+from src.storage import _s3_client_kwargs
 
-def _infer_region_name(endpoint_url: str) -> str:
-    explicit_region = os.environ.get("S3_REGION_NAME")
-    if explicit_region:
-        return explicit_region
-
-    host = urlparse(endpoint_url).hostname or ""
-    match = re.match(r"^s3\.([a-z0-9-]+)\.io\.cloud\.ovh\.net$", host)
-    if match:
-        return match.group(1)
-
-    return "us-east-1"
-
-
-def _s3_client_kwargs(endpoint_url: str) -> dict:
-    return {
-        "endpoint_url": endpoint_url,
-        "region_name": _infer_region_name(endpoint_url),
-        "aws_access_key_id": os.environ["S3_ACCESS_KEY_ID"],
-        "aws_secret_access_key": os.environ["S3_SECRET_ACCESS_KEY"],
-        "config": Config(
-            signature_version="s3v4",
-            s3={"addressing_style": os.environ.get("S3_ADDRESSING_STYLE", "path")},
-        ),
-    }
-
+# Debug: affiche les variables disponibles
+print(
+    f"DEBUG: S3_ENDPOINT = {os.environ.get('S3_ENDPOINT', 'NOT SET')}", file=sys.stderr
+)
+print(
+    f"DEBUG: S3_REGION_NAME = {os.environ.get('S3_REGION_NAME', 'NOT SET')}",
+    file=sys.stderr,
+)
+print(
+    f"DEBUG: S3_ACCESS_KEY_ID = {'***' if os.environ.get('S3_ACCESS_KEY_ID') else 'NOT SET'}",
+    file=sys.stderr,
+)
+print(
+    f"DEBUG: S3_SECRET_ACCESS_KEY = {'***' if os.environ.get('S3_SECRET_ACCESS_KEY') else 'NOT SET'}",
+    file=sys.stderr,
+)
+print(
+    f"DEBUG: S3_BUCKET_NAME = {os.environ.get('S3_BUCKET_NAME', 'NOT SET')}",
+    file=sys.stderr,
+)
+print(f"DEBUG: BASE_URL = {os.environ.get('BASE_URL', 'NOT SET')}", file=sys.stderr)
+print(
+    f"DEBUG: CORS_ALLOWED_ORIGINS = {os.environ.get('CORS_ALLOWED_ORIGINS', 'NOT SET')}",
+    file=sys.stderr,
+)
 
 client = boto3.client(
     "s3",

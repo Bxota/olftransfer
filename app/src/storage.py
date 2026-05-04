@@ -10,16 +10,41 @@ _client = None
 _presign_client = None
 
 
+def _endpoint_hostname(endpoint_url: str) -> str:
+    parsed = urlparse(endpoint_url)
+    if parsed.hostname:
+        return parsed.hostname
+
+    parsed = urlparse(f"//{endpoint_url}")
+    return parsed.hostname or ""
+
+
 def _infer_region_name(endpoint_url: str) -> str:
     explicit_region = os.environ.get("S3_REGION_NAME")
     if explicit_region:
         return explicit_region
 
-    host = urlparse(endpoint_url).hostname or ""
+    host = _endpoint_hostname(endpoint_url)
+
+    if host.endswith("r2.cloudflarestorage.com"):
+        return "auto"
+
     match = re.match(r"^s3\.([a-z0-9-]+)\.io\.cloud\.ovh\.net$", host)
     if match:
-        return match.group(1)
+        region = match.group(1)
+        import sys
 
+        print(
+            f"DEBUG storage.py: OVH region inferred from {host} -> {region}",
+            file=sys.stderr,
+        )
+        return region
+
+    import sys
+
+    print(
+        f"DEBUG storage.py: falling back to us-east-1 for host {host}", file=sys.stderr
+    )
     return "us-east-1"
 
 
