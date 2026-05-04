@@ -43,6 +43,16 @@ client = boto3.client(
 )
 
 bucket = os.environ["S3_BUCKET_NAME"]
+
+# Test: Try head_bucket to validate credentials before CORS
+print(f"DEBUG: Testing bucket access with head_bucket...", file=sys.stderr)
+try:
+    client.head_bucket(Bucket=bucket)
+    print(f"DEBUG: ✓ Bucket access successful", file=sys.stderr)
+except Exception as e:
+    print(f"DEBUG: ✗ Bucket access failed: {e}", file=sys.stderr)
+    raise
+
 raw_origins = os.environ.get("CORS_ALLOWED_ORIGINS", os.environ.get("BASE_URL", ""))
 allowed_origins = [
     origin.strip().rstrip("/") for origin in raw_origins.split(",") if origin.strip()

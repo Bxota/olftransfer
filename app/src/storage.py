@@ -11,6 +11,8 @@ _presign_client = None
 
 
 def _endpoint_hostname(endpoint_url: str) -> str:
+    # Normalize: strip trailing slashes before parsing
+    endpoint_url = endpoint_url.rstrip("/")
     parsed = urlparse(endpoint_url)
     if parsed.hostname:
         return parsed.hostname
@@ -49,14 +51,22 @@ def _infer_region_name(endpoint_url: str) -> str:
 
 
 def _s3_client_kwargs(endpoint_url: str) -> dict:
+    # Normalize: strip trailing slashes
+    endpoint_url = endpoint_url.rstrip("/")
+    region = _infer_region_name(endpoint_url)
+    addressing_style = os.environ.get("S3_ADDRESSING_STYLE", "path")
+    
+    import sys
+    print(f"DEBUG: S3 client config: endpoint={endpoint_url}, region={region}, style={addressing_style}", file=sys.stderr)
+    
     return {
         "endpoint_url": endpoint_url,
-        "region_name": _infer_region_name(endpoint_url),
+        "region_name": region,
         "aws_access_key_id": os.environ["S3_ACCESS_KEY_ID"],
         "aws_secret_access_key": os.environ["S3_SECRET_ACCESS_KEY"],
         "config": Config(
             signature_version="s3v4",
-            s3={"addressing_style": os.environ.get("S3_ADDRESSING_STYLE", "path")},
+            s3={"addressing_style": addressing_style},
         ),
     }
 
