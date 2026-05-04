@@ -1,7 +1,7 @@
 import logging
 from apscheduler.schedulers.background import BackgroundScheduler
 from .db import get_conn
-from .r2 import delete_objects
+from .storage import delete_objects
 
 logger = logging.getLogger(__name__)
 scheduler = BackgroundScheduler()

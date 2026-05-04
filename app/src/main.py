@@ -30,7 +30,7 @@ from .models import (
     UploadUrl,
     UserTransfer,
 )
-from .r2 import delete_objects, presigned_download_url, presigned_upload_url
+from .storage import delete_objects, presigned_download_url, presigned_upload_url
 
 STATIC_DIR = os.path.join(os.path.dirname(__file__), "static")
 BASE_URL = os.environ.get("BASE_URL", "https://olf-transfer.bxota.com")
