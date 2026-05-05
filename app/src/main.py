@@ -1,11 +1,11 @@
 import hashlib
 import os
 import secrets
-import tempfile
 from contextlib import asynccontextmanager
 from datetime import datetime, timedelta, timezone
 
-from fastapi import Cookie, Depends, FastAPI, HTTPException, Query, Request, Response
+from fastapi import Cookie, Depends, FastAPI, HTTPException, Query, Response
+from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 
@@ -34,14 +34,15 @@ from .models import (
 from .storage import (
     abort_multipart_upload,
     complete_multipart_upload,
+    create_multipart_upload,
     delete_objects,
     get_bucket_stats,
     get_log_content,
     list_log_objects,
+    MULTIPART_THRESHOLD,
     presigned_download_url,
     presigned_upload_part,
-    _bucket,
-    get_client,
+    presigned_upload_url,
 )
 
 STATIC_DIR = os.path.join(os.path.dirname(__file__), "static")
@@ -58,6 +59,16 @@ async def lifespan(app: FastAPI):
 
 
 app = FastAPI(title="olftransfer", lifespan=lifespan)
+
+_cors_origins = [o.strip().rstrip("/") for o in os.environ.get("CORS_ALLOWED_ORIGINS", BASE_URL).split(",") if o.strip()]
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=_cors_origins,
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+
 app.mount("/static", StaticFiles(directory=STATIC_DIR), name="static")
 
 
@@ -372,11 +383,19 @@ def create_transfer(body: CreateTransferRequest, user: dict = Depends(get_curren
                 (transfer_id, f.filename, f.size_bytes, f.mime_type, r2_key),
             )
             file_id = cur.fetchone()[0]
-            uploads.append(UploadUrl(
-                file_id=str(file_id),
-                filename=f.filename,
-                upload_url=f"/uploads/{file_id}/content",
-            ))
+            if f.size_bytes >= MULTIPART_THRESHOLD:
+                mp_upload_id = create_multipart_upload(r2_key, f.mime_type)
+                uploads.append(UploadUrl(
+                    file_id=str(file_id),
+                    filename=f.filename,
+                    multipart_upload_id=mp_upload_id,
+                ))
+            else:
+                uploads.append(UploadUrl(
+                    file_id=str(file_id),
+                    filename=f.filename,
+                    upload_url=presigned_upload_url(r2_key, f.mime_type),
+                ))
 
     return CreateTransferResponse(
         token=token,
@@ -384,30 +403,6 @@ def create_transfer(body: CreateTransferRequest, user: dict = Depends(get_curren
         expires_at=expires_at,
         uploads=uploads,
     )
-
-
-@app.put("/uploads/{file_id}/content", status_code=204)
-async def upload_content(file_id: str, request: Request, user: dict = Depends(get_current_user)):
-    with get_conn() as conn:
-        cur = conn.cursor()
-        cur.execute(
-            "SELECT f.r2_key, f.mime_type FROM files f JOIN transfers t ON f.transfer_id = t.id WHERE f.id = %s AND t.user_id = %s",
-            (file_id, user["id"]),
-        )
-        row = cur.fetchone()
-    if not row:
-        raise HTTPException(status_code=404)
-
-    r2_key, mime_type = row
-    with tempfile.SpooledTemporaryFile(max_size=50 * 1024 * 1024) as tmp:
-        async for chunk in request.stream():
-            tmp.write(chunk)
-        tmp.seek(0)
-        extra_args = {"ContentType": mime_type} if mime_type else None
-        if extra_args:
-            get_client().upload_fileobj(tmp, _bucket(), r2_key, ExtraArgs=extra_args)
-        else:
-            get_client().upload_fileobj(tmp, _bucket(), r2_key)
 
 
 @app.post("/uploads/{file_id}/part-url")
