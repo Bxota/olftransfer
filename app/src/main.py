@@ -1,6 +1,9 @@
 import hashlib
 import os
 import secrets
+import shutil
+import tempfile
+import zipfile
 from contextlib import asynccontextmanager
 from datetime import datetime, timedelta, timezone
 
@@ -8,6 +11,7 @@ from fastapi import Cookie, Depends, FastAPI, HTTPException, Query, Response
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
+from starlette.background import BackgroundTask
 
 from .auth import (
     create_session,
@@ -37,6 +41,7 @@ from .storage import (
     create_multipart_upload,
     delete_objects,
     get_bucket_stats,
+    get_client,
     get_log_content,
     list_log_objects,
     MULTIPART_THRESHOLD,
@@ -75,6 +80,98 @@ app.mount("/static", StaticFiles(directory=STATIC_DIR), name="static")
 # ── Pages HTML ────────────────────────────────────────────────────────────────
 
 NO_STORE = {"Cache-Control": "no-store"}
+
+
+def _download_file_rows(token: str, password: str | None):
+    with get_conn() as conn:
+        cur = conn.cursor()
+        cur.execute(
+            """
+            SELECT id, expires_at, password_hash, download_count, max_downloads
+            FROM transfers WHERE token = %s AND confirmed_at IS NOT NULL
+            """,
+            (token,),
+        )
+        row = cur.fetchone()
+        if not row:
+            raise HTTPException(status_code=404, detail="Transfer not found")
+
+        transfer_id, expires_at, password_hash, download_count, max_downloads = row
+
+        if expires_at.replace(tzinfo=timezone.utc) < datetime.now(timezone.utc):
+            raise HTTPException(status_code=410, detail="Transfer expired")
+
+        if max_downloads and download_count >= max_downloads:
+            raise HTTPException(status_code=410, detail="Download limit reached")
+
+        if password_hash:
+            if not password:
+                raise HTTPException(status_code=401, detail="Password required")
+            if hashlib.sha256(password.encode()).hexdigest() != password_hash:
+                raise HTTPException(status_code=403, detail="Wrong password")
+
+        cur.execute(
+            "SELECT filename, size_bytes, r2_key FROM files WHERE transfer_id = %s",
+            (transfer_id,),
+        )
+        rows = cur.fetchall()
+
+        cur.execute(
+            "UPDATE transfers SET download_count = download_count + 1 WHERE id = %s",
+            (transfer_id,),
+        )
+
+    return rows
+
+
+def _zip_entry_name(filename: str, used_names: set[str]) -> str:
+    base_name = os.path.basename(filename).strip() or "file"
+    candidate = base_name
+    stem, extension = os.path.splitext(base_name)
+    index = 2
+
+    while candidate in used_names:
+        candidate = f"{stem} ({index}){extension}"
+        index += 1
+
+    used_names.add(candidate)
+    return candidate
+
+
+def _build_transfer_zip(rows) -> str:
+    zip_file = tempfile.NamedTemporaryFile(prefix="transfer-", suffix=".zip", delete=False)
+    zip_path = zip_file.name
+    zip_file.close()
+
+    bucket_name = os.environ["S3_BUCKET_NAME"].strip()
+    used_names: set[str] = set()
+
+    try:
+        with zipfile.ZipFile(zip_path, mode="w") as archive:
+            for filename, _, object_key in rows:
+                archive_name = _zip_entry_name(filename, used_names)
+                response = get_client().get_object(Bucket=bucket_name, Key=object_key)
+                body = response["Body"]
+                try:
+                    with archive.open(archive_name, mode="w") as target:
+                        shutil.copyfileobj(body, target, length=1024 * 1024)
+                finally:
+                    body.close()
+    except Exception:
+        try:
+            os.remove(zip_path)
+        except OSError:
+            pass
+        raise
+
+    return zip_path
+
+
+def _cleanup_file(path: str) -> None:
+    try:
+        os.remove(path)
+    except OSError:
+        pass
 
 
 @app.get("/", include_in_schema=False)
@@ -563,45 +660,25 @@ def get_transfer(token: str):
 
 @app.get("/transfers/{token}/download", response_model=DownloadResponse)
 def download_transfer(token: str, password: str | None = Query(default=None)):
-    with get_conn() as conn:
-        cur = conn.cursor()
-        cur.execute(
-            """
-            SELECT id, expires_at, password_hash, download_count, max_downloads
-            FROM transfers WHERE token = %s AND confirmed_at IS NOT NULL
-            """,
-            (token,),
-        )
-        row = cur.fetchone()
-        if not row:
-            raise HTTPException(status_code=404, detail="Transfer not found")
-
-        transfer_id, expires_at, password_hash, download_count, max_downloads = row
-
-        if expires_at.replace(tzinfo=timezone.utc) < datetime.now(timezone.utc):
-            raise HTTPException(status_code=410, detail="Transfer expired")
-
-        if max_downloads and download_count >= max_downloads:
-            raise HTTPException(status_code=410, detail="Download limit reached")
-
-        if password_hash:
-            if not password:
-                raise HTTPException(status_code=401, detail="Password required")
-            if hashlib.sha256(password.encode()).hexdigest() != password_hash:
-                raise HTTPException(status_code=403, detail="Wrong password")
-
-        cur.execute(
-            "SELECT filename, size_bytes, r2_key FROM files WHERE transfer_id = %s",
-            (transfer_id,),
-        )
-        rows = cur.fetchall()
-
-        cur.execute(
-            "UPDATE transfers SET download_count = download_count + 1 WHERE id = %s",
-            (transfer_id,),
-        )
+    rows = _download_file_rows(token, password)
 
     return DownloadResponse(files=[
         DownloadUrl(filename=r[0], size_bytes=r[1], download_url=presigned_download_url(r[2], r[0]))
         for r in rows
     ])
+
+
+@app.get("/transfers/{token}/download-zip")
+def download_transfer_zip(token: str, password: str | None = Query(default=None)):
+    rows = _download_file_rows(token, password)
+
+    if len(rows) <= 1:
+        raise HTTPException(status_code=400, detail="Zip download requires at least 2 files")
+
+    zip_path = _build_transfer_zip(rows)
+    return FileResponse(
+        zip_path,
+        media_type="application/zip",
+        filename=f"{token}.zip",
+        background=BackgroundTask(_cleanup_file, zip_path),
+    )

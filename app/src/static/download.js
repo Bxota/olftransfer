@@ -113,6 +113,10 @@ async function getDownloadUrls() {
   return (await res.json()).files;
 }
 
+function getPasswordParams() {
+  return passwordValue ? `?password=${encodeURIComponent(passwordValue)}` : '';
+}
+
 async function downloadFile(index) {
   const files = await getDownloadUrls();
   if (!files) return;
@@ -122,6 +126,10 @@ async function downloadFile(index) {
 async function downloadAll() {
   const files = await getDownloadUrls();
   if (!files) return;
+  if (files.length > 1) {
+    triggerDownload(`/transfers/${token}/download-zip${getPasswordParams()}`, `${token}.zip`);
+    return;
+  }
   for (const f of files) {
     triggerDownload(f.download_url, f.filename);
     await new Promise(r => setTimeout(r, 200));
