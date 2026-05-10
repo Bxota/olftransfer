@@ -26,7 +26,46 @@
   </header>
 
   <main class="page">
-    <div class="page-narrow">
+    <div class="page-admin">
+
+      <!-- Inviter + Utilisateurs côte à côte -->
+      <div class="admin-grid">
+
+        <!-- Inviter un utilisateur -->
+        <div class="card">
+          <div class="card-body">
+            <p class="section-label">Inviter un utilisateur</p>
+            <form id="inviteForm">
+              <div class="field">
+                <label for="email">Adresse email</label>
+                <input type="email" id="email" placeholder="ami@exemple.com" autofocus>
+              </div>
+              <div id="invite-error" class="alert alert-error mt-3 hidden"></div>
+              <div id="invite-success" class="hidden mt-3">
+                <div class="alert alert-success" id="invite-success-msg"></div>
+                <div class="share-box mt-3" id="invite-link-box" style="display:none">
+                  <span class="share-link" id="invite-link"></span>
+                  <button class="copy-btn" id="invite-copy">Copier</button>
+                </div>
+              </div>
+              <button type="submit" class="btn btn-primary btn-full mt-4" id="inviteBtn">
+                Envoyer l'invitation
+              </button>
+            </form>
+          </div>
+        </div>
+
+        <!-- Liste des utilisateurs -->
+        <div class="card">
+          <div class="card-body">
+            <p class="section-label">Utilisateurs</p>
+            <ul class="file-list" id="userList">
+              <li class="text-subtext" style="padding:12px 0">Chargement…</li>
+            </ul>
+          </div>
+        </div>
+
+      </div>
 
       <!-- Statistiques -->
       <div class="card">
@@ -41,42 +80,8 @@
         </div>
       </div>
 
-      <!-- Inviter un utilisateur -->
-      <div class="card">
-        <div class="card-body">
-          <p class="section-label">Inviter un utilisateur</p>
-          <form id="inviteForm">
-            <div class="field">
-              <label for="email">Adresse email</label>
-              <input type="email" id="email" placeholder="ami@exemple.com" autofocus>
-            </div>
-            <div id="invite-error" class="alert alert-error mt-3 hidden"></div>
-            <div id="invite-success" class="hidden mt-3">
-              <div class="alert alert-success" id="invite-success-msg"></div>
-              <div class="share-box mt-3" id="invite-link-box" style="display:none">
-                <span class="share-link" id="invite-link"></span>
-                <button class="copy-btn" id="invite-copy">Copier</button>
-              </div>
-            </div>
-            <button type="submit" class="btn btn-primary btn-full mt-4" id="inviteBtn">
-              Envoyer l'invitation
-            </button>
-          </form>
-        </div>
-      </div>
-
-      <!-- Liste des utilisateurs -->
-      <div class="card mt-4">
-        <div class="card-body">
-          <p class="section-label">Utilisateurs</p>
-          <ul class="file-list" id="userList">
-            <li class="text-subtext" style="padding:12px 0">Chargement…</li>
-          </ul>
-        </div>
-      </div>
-
       <!-- Access Logs OVH -->
-      <div class="card mt-4">
+      <div class="card">
         <div class="card-body">
           <p class="section-label">Access Logs OVH</p>
           <div id="logs-unavailable" class="hidden">
@@ -91,7 +96,7 @@
       </div>
 
       <!-- Contenu d'un log -->
-      <div class="card mt-4 hidden" id="logViewerCard">
+      <div class="card hidden" id="logViewerCard">
         <div class="card-body">
           <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px">
             <p class="section-label" style="margin:0" id="logViewerTitle">Log</p>
