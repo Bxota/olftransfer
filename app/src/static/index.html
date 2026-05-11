@@ -145,6 +145,22 @@
 
   </main>
 
+  <!-- Modal de prévisualisation -->
+  <div id="preview-modal" class="preview-modal hidden" role="dialog" aria-modal="true">
+    <div class="preview-backdrop" id="preview-backdrop"></div>
+    <div class="preview-container">
+      <div class="preview-header">
+        <span class="preview-filename" id="preview-filename"></span>
+        <button class="preview-close" id="preview-close" title="Fermer">
+          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5">
+            <line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/>
+          </svg>
+        </button>
+      </div>
+      <div class="preview-body" id="preview-body"></div>
+    </div>
+  </div>
+
   <script src="/static/upload.js"></script>
 </body>
 </html>

@@ -1,7 +1,7 @@
 import logging
 from apscheduler.schedulers.background import BackgroundScheduler
 from .db import get_conn
-from .storage import delete_objects
+from .storage import delete_objects, write_log_event
 
 logger = logging.getLogger(__name__)
 scheduler = BackgroundScheduler()
@@ -20,12 +20,14 @@ def _do_cleanup():
         cur = conn.cursor()
 
         cur.execute("""
-            SELECT f.r2_key
+            SELECT t.token, f.r2_key
             FROM files f
             JOIN transfers t ON f.transfer_id = t.id
             WHERE t.expires_at < NOW() AND t.files_purged_at IS NULL AND t.confirmed_at IS NOT NULL
         """)
-        r2_keys = [row[0] for row in cur.fetchall()]
+        rows = cur.fetchall()
+        r2_keys = [row[1] for row in rows]
+        expired_tokens = list({row[0] for row in rows})
 
         logger.info(f"Cleanup: found {len(r2_keys)} S3 object(s) to delete")
 
@@ -37,6 +39,9 @@ def _do_cleanup():
             WHERE expires_at < NOW() AND files_purged_at IS NULL AND confirmed_at IS NOT NULL
         """)
         purged = cur.rowcount
+
+        for token in expired_tokens:
+            write_log_event("transfer_deleted", token, {"reason": "expired"})
 
         logger.info(
             f"Cleanup: purged {purged} expired transfer(s), {len(r2_keys)} S3 object(s)"

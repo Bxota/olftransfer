@@ -196,6 +196,21 @@ def _logs_bucket() -> str | None:
     return os.environ.get("S3_LOGS_BUCKET")
 
 
+def write_log_event(event_type: str, token: str, data: dict) -> None:
+    bucket = _logs_bucket()
+    if not bucket:
+        return
+    import json
+    from datetime import datetime, timezone
+    now = datetime.now(timezone.utc)
+    key = f"{now.strftime('%Y/%m/%d')}/{event_type}_{now.strftime('%H-%M-%S-%f')}_{token}.json"
+    body = json.dumps({"event": event_type, "timestamp": now.isoformat(), "token": token, **data}, default=str)
+    try:
+        get_client().put_object(Bucket=bucket, Key=key, Body=body.encode(), ContentType="application/json")
+    except Exception:
+        pass
+
+
 def list_log_objects(prefix: str = "", max_keys: int = 200) -> list[dict]:
     bucket = _logs_bucket()
     if not bucket:

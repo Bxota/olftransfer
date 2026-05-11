@@ -4,6 +4,33 @@ const fileList = document.getElementById('fileList');
 const progressList = document.getElementById('progressList');
 
 let files = [];
+let fileNames = [];
+let thumbUrls = {};
+
+function getExt(name) {
+  const i = name.lastIndexOf('.');
+  return i > 0 ? name.slice(i) : '';
+}
+
+function getStem(name) {
+  const i = name.lastIndexOf('.');
+  return i > 0 ? name.slice(0, i) : name;
+}
+
+function getFileCategory(file) {
+  const t = file.type;
+  if (t.startsWith('image/')) return 'image';
+  if (t.startsWith('video/')) return 'video';
+  if (t.startsWith('audio/')) return 'audio';
+  if (t === 'application/pdf') return 'pdf';
+  if (t.startsWith('text/') || /\.(txt|md|json|csv|xml|yaml|yml|log|js|ts|py|html|css|sh)$/i.test(file.name)) return 'text';
+  return 'other';
+}
+
+function getEffectiveName(i) {
+  const stem = fileNames[i].trim() || getStem(files[i].name);
+  return stem + getExt(files[i].name);
+}
 
 // ── Drag & drop ──────────────────────────────────────────────────────────────
 
@@ -20,6 +47,7 @@ document.getElementById('addMoreBtn').addEventListener('click', () => fileInput.
 
 function addFiles(newFiles) {
   files = [...files, ...newFiles];
+  fileNames = [...fileNames, ...newFiles.map(f => getStem(f.name))];
   renderFileList();
   showSections();
 }
@@ -39,16 +67,32 @@ function formatSize(bytes) {
 }
 
 function renderFileList() {
-  fileList.innerHTML = files.map((f, i) => `
+  files.forEach((f, i) => {
+    if (getFileCategory(f) === 'image' && !thumbUrls[i]) {
+      thumbUrls[i] = URL.createObjectURL(f);
+    }
+  });
+
+  fileList.innerHTML = files.map((f, i) => {
+    const ext = getExt(f.name);
+    const cat = getFileCategory(f);
+    const previewable = cat !== 'other';
+    const iconHtml = cat === 'image' && thumbUrls[i]
+      ? `<img class="file-thumb" src="${thumbUrls[i]}" data-index="${i}" alt="" title="Aperçu">`
+      : `<div class="file-type-icon${previewable ? ' previewable' : ''}" data-index="${i}" title="${previewable ? 'Aperçu' : ''}">
+           <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+             <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/>
+             <polyline points="14 2 14 8 20 8"/>
+           </svg>
+         </div>`;
+    return `
     <li class="file-item">
-      <div class="file-type-icon">
-        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-          <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/>
-          <polyline points="14 2 14 8 20 8"/>
-        </svg>
-      </div>
+      ${iconHtml}
       <div class="file-info">
-        <div class="file-name">${f.name}</div>
+        <div class="file-name-edit">
+          <input class="file-name-input" type="text" value="${escapeHtml(fileNames[i])}" data-index="${i}" title="Renommer le fichier">
+          ${ext ? `<span class="file-ext">${escapeHtml(ext)}</span>` : ''}
+        </div>
         <div class="file-size">${formatSize(f.size)}</div>
       </div>
       <button class="file-remove" data-index="${i}" title="Retirer">
@@ -57,11 +101,37 @@ function renderFileList() {
         </svg>
       </button>
     </li>
-  `).join('');
+  `;
+  }).join('');
+
+  fileList.querySelectorAll('.file-name-input').forEach((input) => {
+    input.addEventListener('input', () => {
+      fileNames[parseInt(input.dataset.index)] = input.value;
+    });
+  });
+
+  fileList.querySelectorAll('[data-index]').forEach((el) => {
+    if (el.classList.contains('file-remove') || el.classList.contains('file-name-input')) return;
+    const i = parseInt(el.dataset.index);
+    const f = files[i];
+    if (!f || getFileCategory(f) === 'other') return;
+    el.style.cursor = 'pointer';
+    el.addEventListener('click', () => openPreview(f));
+  });
 
   fileList.querySelectorAll('.file-remove').forEach((btn) => {
     btn.addEventListener('click', () => {
-      files.splice(parseInt(btn.dataset.index), 1);
+      const i = parseInt(btn.dataset.index);
+      if (thumbUrls[i]) { URL.revokeObjectURL(thumbUrls[i]); }
+      files.splice(i, 1);
+      fileNames.splice(i, 1);
+      const newThumbs = {};
+      Object.keys(thumbUrls).forEach(k => {
+        const n = parseInt(k);
+        if (n < i) newThumbs[n] = thumbUrls[n];
+        else if (n > i) newThumbs[n - 1] = thumbUrls[n];
+      });
+      thumbUrls = newThumbs;
       renderFileList();
       showSections();
     });
@@ -89,7 +159,10 @@ document.getElementById('logoutBtn').addEventListener('click', async () => {
 });
 
 document.getElementById('newTransferBtn').addEventListener('click', () => {
+  Object.values(thumbUrls).forEach(u => URL.revokeObjectURL(u));
+  thumbUrls = {};
   files = [];
+  fileNames = [];
   renderFileList();
   showSections();
   document.getElementById('step-select').classList.remove('hidden');
@@ -157,7 +230,7 @@ async function send() {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
-        files: files.map(f => ({ filename: f.name, size_bytes: f.size, mime_type: f.type || null })),
+        files: files.map((f, i) => ({ filename: getEffectiveName(i), size_bytes: f.size, mime_type: f.type || null })),
         expires_in_hours: expiresIn,
         max_downloads: maxDownloads ? parseInt(maxDownloads) : null,
         password,
@@ -214,7 +287,7 @@ function renderProgressList() {
         </svg>
       </div>
       <div class="file-info">
-        <div class="file-name">${f.name}</div>
+        <div class="file-name">${escapeHtml(getEffectiveName(i))}</div>
         <div class="progress"><div class="progress-bar" id="bar-${i}"></div></div>
       </div>
       <span class="file-status" id="status-${i}">En attente</span>
@@ -449,3 +522,73 @@ document.getElementById('copyBtn').addEventListener('click', () => {
     setTimeout(() => { btn.textContent = 'Copier'; btn.classList.remove('copied'); }, 2000);
   });
 });
+
+// ── Prévisualisation ──────────────────────────────────────────────────────────
+
+let previewObjectUrl = null;
+
+function openPreview(file) {
+  if (previewObjectUrl) { URL.revokeObjectURL(previewObjectUrl); previewObjectUrl = null; }
+
+  const modal = document.getElementById('preview-modal');
+  const body = document.getElementById('preview-body');
+  document.getElementById('preview-filename').textContent = file.name;
+  body.innerHTML = '';
+  body.style.background = '';
+
+  const cat = getFileCategory(file);
+
+  if (cat === 'text') {
+    const reader = new FileReader();
+    reader.onload = (e) => {
+      const pre = document.createElement('pre');
+      pre.textContent = e.target.result;
+      body.style.background = '#1e1e1e';
+      body.appendChild(pre);
+    };
+    reader.readAsText(file);
+  } else {
+    const url = URL.createObjectURL(file);
+    previewObjectUrl = url;
+
+    if (cat === 'image') {
+      const img = document.createElement('img');
+      img.src = url; img.alt = file.name;
+      body.appendChild(img);
+    } else if (cat === 'video') {
+      const video = document.createElement('video');
+      video.src = url; video.controls = true;
+      body.appendChild(video);
+    } else if (cat === 'audio') {
+      const audio = document.createElement('audio');
+      audio.src = url; audio.controls = true;
+      body.style.background = 'var(--bg)';
+      body.appendChild(audio);
+    } else if (cat === 'pdf') {
+      const iframe = document.createElement('iframe');
+      iframe.src = url; iframe.title = file.name;
+      body.style.background = 'white';
+      body.appendChild(iframe);
+    }
+  }
+
+  modal.classList.remove('hidden');
+  document.addEventListener('keydown', onPreviewKey);
+}
+
+function closePreview() {
+  const modal = document.getElementById('preview-modal');
+  modal.classList.add('hidden');
+  const body = document.getElementById('preview-body');
+  const video = body.querySelector('video');
+  if (video) video.pause();
+  body.innerHTML = '';
+  body.style.background = '';
+  if (previewObjectUrl) { URL.revokeObjectURL(previewObjectUrl); previewObjectUrl = null; }
+  document.removeEventListener('keydown', onPreviewKey);
+}
+
+function onPreviewKey(e) { if (e.key === 'Escape') closePreview(); }
+
+document.getElementById('preview-close').addEventListener('click', closePreview);
+document.getElementById('preview-backdrop').addEventListener('click', closePreview);

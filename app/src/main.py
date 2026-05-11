@@ -7,7 +7,7 @@ import zipfile
 from contextlib import asynccontextmanager
 from datetime import datetime, timedelta, timezone
 
-from fastapi import Cookie, Depends, FastAPI, HTTPException, Query, Response
+from fastapi import Cookie, Depends, FastAPI, HTTPException, Query, Request, Response
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
@@ -48,6 +48,7 @@ from .storage import (
     presigned_download_url,
     presigned_upload_part,
     presigned_upload_url,
+    write_log_event,
 )
 
 STATIC_DIR = os.path.join(os.path.dirname(__file__), "static")
@@ -451,7 +452,7 @@ def health():
 
 
 @app.post("/transfers", response_model=CreateTransferResponse, status_code=201)
-def create_transfer(body: CreateTransferRequest, user: dict = Depends(get_current_user)):
+def create_transfer(body: CreateTransferRequest, request: Request, user: dict = Depends(get_current_user)):
     token = secrets.token_urlsafe(32)
     expires_at = datetime.now(timezone.utc) + timedelta(hours=body.expires_in_hours)
     password_hash = (
@@ -494,6 +495,15 @@ def create_transfer(body: CreateTransferRequest, user: dict = Depends(get_curren
                     upload_url=presigned_upload_url(r2_key, f.mime_type),
                 ))
 
+    write_log_event("transfer_created", token, {
+        "user_email": user["email"],
+        "file_count": len(body.files),
+        "total_bytes": sum(f.size_bytes for f in body.files),
+        "expires_in_hours": body.expires_in_hours,
+        "has_password": bool(body.password),
+        "max_downloads": body.max_downloads,
+        "ip": request.headers.get("x-forwarded-for", request.client.host if request.client else None),
+    })
     return CreateTransferResponse(
         token=token,
         share_url=f"{BASE_URL}/t/{token}",
@@ -605,7 +615,7 @@ def list_my_transfers(user: dict = Depends(get_current_user)):
 
 
 @app.delete("/transfers/{token}", status_code=204)
-def delete_transfer(token: str, user: dict = Depends(get_current_user)):
+def delete_transfer(token: str, request: Request, user: dict = Depends(get_current_user)):
     with get_conn() as conn:
         cur = conn.cursor()
         cur.execute(
@@ -624,6 +634,12 @@ def delete_transfer(token: str, user: dict = Depends(get_current_user)):
             delete_objects(r2_keys)
 
         cur.execute("DELETE FROM transfers WHERE id = %s", (transfer_id,))
+
+    write_log_event("transfer_deleted", token, {
+        "user_email": user["email"],
+        "reason": "manual",
+        "ip": request.headers.get("x-forwarded-for", request.client.host if request.client else None),
+    })
 
 
 @app.get("/transfers/{token}", response_model=TransferInfo)
@@ -659,9 +675,15 @@ def get_transfer(token: str):
 
 
 @app.get("/transfers/{token}/download", response_model=DownloadResponse)
-def download_transfer(token: str, password: str | None = Query(default=None)):
+def download_transfer(token: str, request: Request, password: str | None = Query(default=None)):
     rows = _download_file_rows(token, password)
 
+    write_log_event("download", token, {
+        "ip": request.headers.get("x-forwarded-for", request.client.host if request.client else None),
+        "user_agent": request.headers.get("user-agent"),
+        "file_count": len(rows),
+        "total_bytes": sum(r[1] for r in rows),
+    })
     return DownloadResponse(files=[
         DownloadUrl(filename=r[0], size_bytes=r[1], download_url=presigned_download_url(r[2], r[0]))
         for r in rows
