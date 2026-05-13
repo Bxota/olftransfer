@@ -22,6 +22,8 @@ services:
       SMTP_USER: ${SMTP_USER}
       SMTP_PASSWORD: ${SMTP_PASSWORD}
       SMTP_FROM: ${SMTP_FROM}
+      CLAMAV_HOST: clamav
+      CLAMAV_PORT: 3310
     entrypoint: []
     command: ["uvicorn", "src.main:app", "--host", "0.0.0.0", "--port", "8000"]
     networks:
@@ -29,6 +31,7 @@ services:
     depends_on:
       - postgres
       - minio
+      - clamav
 
   postgres:
     environment:

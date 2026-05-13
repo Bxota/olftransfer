@@ -145,6 +145,34 @@
 
   </main>
 
+  <!-- Modal avertissement antivirus -->
+  <div id="virus-warning-modal" class="preview-modal hidden" role="dialog" aria-modal="true">
+    <div class="preview-backdrop"></div>
+    <div class="virus-modal-container">
+      <div style="display:flex;align-items:center;gap:12px;margin-bottom:20px">
+        <div style="flex-shrink:0;width:44px;height:44px;background:#FEF3C7;border-radius:50%;display:flex;align-items:center;justify-content:center">
+          <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="#D97706" stroke-width="2.5">
+            <path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/>
+            <line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/>
+          </svg>
+        </div>
+        <div>
+          <p style="font-weight:600;margin:0;font-size:15px">Fichier potentiellement dangereux</p>
+          <p style="color:var(--subtext);font-size:13px;margin:4px 0 0">Détecté par l'antivirus</p>
+        </div>
+      </div>
+      <div style="background:var(--bg);border:1px solid var(--border);border-radius:8px;padding:12px;margin-bottom:16px">
+        <p style="font-size:13px;margin:0 0 6px"><strong>Fichier :</strong> <span id="virus-warning-filename" style="word-break:break-all"></span></p>
+        <p style="font-size:13px;margin:0"><strong>Signature :</strong> <code id="virus-warning-name" style="font-size:12px;background:var(--card);padding:2px 6px;border-radius:4px;border:1px solid var(--border)"></code></p>
+      </div>
+      <p style="font-size:13px;color:var(--subtext);margin-bottom:24px;line-height:1.5">En tant qu'utilisateur de confiance, vous pouvez confirmer malgré la détection. Assurez-vous de connaître la provenance de ce fichier.</p>
+      <div style="display:flex;gap:8px">
+        <button class="btn btn-ghost" id="virus-warning-cancel" style="flex:1">Annuler</button>
+        <button class="btn btn-primary" id="virus-warning-confirm" style="flex:1;background:#D97706;border-color:#D97706">Je confirme quand même</button>
+      </div>
+    </div>
+  </div>
+
   <!-- Modal de prévisualisation -->
   <div id="preview-modal" class="preview-modal hidden" role="dialog" aria-modal="true">
     <div class="preview-backdrop" id="preview-backdrop"></div>

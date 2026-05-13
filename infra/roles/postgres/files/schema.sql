@@ -63,6 +63,17 @@ BEGIN
     END IF;
 END $$;
 
+-- Migration : is_trusted pour les utilisateurs pouvant bypass l'antivirus avec acknowledgment
+DO $$
+BEGIN
+    IF NOT EXISTS (
+        SELECT 1 FROM information_schema.columns
+        WHERE table_name = 'users' AND column_name = 'is_trusted'
+    ) THEN
+        ALTER TABLE users ADD COLUMN is_trusted BOOLEAN NOT NULL DEFAULT FALSE;
+    END IF;
+END $$;
+
 -- Migration : confirmed_at NULL = upload en cours ou échoué, non visible
 DO $$
 BEGIN

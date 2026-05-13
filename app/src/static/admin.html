@@ -209,7 +209,7 @@
       const users = await res.json();
       const list = document.getElementById('userList');
       list.innerHTML = users.map(u => `
-        <li class="file-item">
+        <li class="file-item" style="gap:8px">
           <div class="file-type-icon">
             <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
               <path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/>
@@ -217,11 +217,36 @@
             </svg>
           </div>
           <div class="file-info">
-            <div class="file-name">${u.email}</div>
-            <div class="file-size">${u.is_admin ? 'Admin · ' : ''}Membre depuis ${new Date(u.created_at).toLocaleDateString('fr-FR')}</div>
+            <div class="file-name">${escHtml(u.email)}</div>
+            <div class="file-size">${u.is_admin ? 'Admin · ' : ''}${u.is_trusted ? 'Trusted · ' : ''}Membre depuis ${new Date(u.created_at).toLocaleDateString('fr-FR')}</div>
           </div>
+          <button
+            class="btn btn-ghost btn-sm trusted-toggle"
+            data-id="${escHtml(u.id)}"
+            data-trusted="${u.is_trusted}"
+            style="font-size:11px;padding:3px 8px;white-space:nowrap;color:${u.is_trusted ? 'var(--success)' : 'var(--subtext)'}"
+            title="${u.is_trusted ? 'Retirer le statut trusted' : 'Marquer comme trusted'}"
+          >${u.is_trusted ? '✓ Trusted' : 'Trusted'}</button>
         </li>
       `).join('');
+
+      list.querySelectorAll('.trusted-toggle').forEach(btn => {
+        btn.addEventListener('click', async () => {
+          const userId = btn.dataset.id;
+          const currentlyTrusted = btn.dataset.trusted === 'true';
+          btn.disabled = true;
+          try {
+            const res = await fetch(`/admin/users/${userId}/trusted`, {
+              method: 'PATCH',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ is_trusted: !currentlyTrusted }),
+            });
+            if (res.ok) loadUsers();
+          } finally {
+            btn.disabled = false;
+          }
+        });
+      });
     }
 
     loadUsers();

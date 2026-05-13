@@ -254,9 +254,29 @@ async function send() {
       await uploadFile(files[i], transfer.uploads[i], i);
     }
 
-    // 4. Confirmer le transfert (tous les uploads ont réussi)
-    const confirmRes = await fetch(`/transfers/${transfer.token}/confirm`, { method: 'POST' });
-    if (!confirmRes.ok) throw new Error('Erreur lors de la confirmation du transfert');
+    // 4. Confirmer le transfert (avec scan antivirus côté serveur)
+    let confirmRes = await fetch(`/transfers/${transfer.token}/confirm`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({}),
+    });
+
+    if (confirmRes.status === 202) {
+      const warn = await confirmRes.json();
+      const acknowledged = await showVirusWarning(warn.filename, warn.virus);
+      if (!acknowledged) throw new Error('Transfert annulé.');
+
+      confirmRes = await fetch(`/transfers/${transfer.token}/confirm`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ acknowledge_risk: true }),
+      });
+    }
+
+    if (!confirmRes.ok) {
+      const detail = await confirmRes.json().then(d => d.detail).catch(() => 'Erreur lors de la confirmation du transfert');
+      throw new Error(detail);
+    }
 
     // 5. Afficher le lien
     clearSession();
@@ -403,6 +423,28 @@ function uploadPart(chunk, url, partNumber, totalParts, index) {
 
     xhr.onerror = () => reject(new Error(`Erreur réseau partie ${partNumber}`));
     xhr.send(chunk);
+  });
+}
+
+// ── Virus warning modal ───────────────────────────────────────────────────────
+
+function showVirusWarning(filename, virus) {
+  return new Promise((resolve) => {
+    const modal = document.getElementById('virus-warning-modal');
+    document.getElementById('virus-warning-filename').textContent = filename;
+    document.getElementById('virus-warning-name').textContent = virus;
+    modal.classList.remove('hidden');
+
+    function onConfirm() { cleanup(); resolve(true); }
+    function onCancel() { cleanup(); resolve(false); }
+    function cleanup() {
+      modal.classList.add('hidden');
+      document.getElementById('virus-warning-confirm').removeEventListener('click', onConfirm);
+      document.getElementById('virus-warning-cancel').removeEventListener('click', onCancel);
+    }
+
+    document.getElementById('virus-warning-confirm').addEventListener('click', onConfirm);
+    document.getElementById('virus-warning-cancel').addEventListener('click', onCancel);
   });
 }
 

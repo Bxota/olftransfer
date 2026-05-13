@@ -174,6 +174,11 @@ def abort_multipart_upload(object_key: str, upload_id: str) -> None:
         pass
 
 
+def download_object(object_key: str) -> bytes:
+    response = get_client().get_object(Bucket=_bucket(), Key=object_key)
+    return response["Body"].read()
+
+
 def delete_objects(object_keys: list[str]) -> None:
     if not object_keys:
         return

@@ -35,11 +35,13 @@ from .models import (
     UploadUrl,
     UserTransfer,
 )
+from .scanner import scan_bytes
 from .storage import (
     abort_multipart_upload,
     complete_multipart_upload,
     create_multipart_upload,
     delete_objects,
+    download_object,
     get_bucket_stats,
     get_client,
     get_log_content,
@@ -334,9 +336,22 @@ def validate_invite(token: str):
 def list_users():
     with get_conn() as conn:
         cur = conn.cursor()
-        cur.execute("SELECT email, is_admin, created_at FROM users ORDER BY created_at")
+        cur.execute("SELECT id, email, is_admin, is_trusted, created_at FROM users ORDER BY created_at")
         rows = cur.fetchall()
-    return [{"email": r[0], "is_admin": r[1], "created_at": r[2]} for r in rows]
+    return [{"id": str(r[0]), "email": r[1], "is_admin": r[2], "is_trusted": r[3], "created_at": r[4]} for r in rows]
+
+
+@app.patch("/admin/users/{user_id}/trusted", dependencies=[Depends(require_admin)])
+def set_user_trusted(user_id: str, body: dict):
+    is_trusted = body.get("is_trusted")
+    if not isinstance(is_trusted, bool):
+        raise HTTPException(status_code=422, detail="is_trusted doit être un booléen")
+    with get_conn() as conn:
+        cur = conn.cursor()
+        cur.execute("UPDATE users SET is_trusted = %s WHERE id = %s", (is_trusted, user_id))
+        if cur.rowcount == 0:
+            raise HTTPException(status_code=404, detail="Utilisateur introuvable")
+    return {"ok": True}
 
 
 @app.get("/admin/stats", dependencies=[Depends(require_admin)])
@@ -564,16 +579,62 @@ def abort_upload(file_id: str, body: dict, user: dict = Depends(get_current_user
     abort_multipart_upload(row[0], upload_id)
 
 
-@app.post("/transfers/{token}/confirm", status_code=204)
-def confirm_transfer(token: str, user: dict = Depends(get_current_user)):
+@app.post("/transfers/{token}/confirm")
+def confirm_transfer(token: str, body: dict = None, user: dict = Depends(get_current_user)):
+    acknowledge_risk = (body or {}).get("acknowledge_risk", False)
+
+    with get_conn() as conn:
+        cur = conn.cursor()
+        cur.execute(
+            "SELECT id FROM transfers WHERE token = %s AND user_id = %s AND confirmed_at IS NULL",
+            (token, user["id"]),
+        )
+        row = cur.fetchone()
+        if not row:
+            raise HTTPException(status_code=404, detail="Transfer not found or already confirmed")
+        transfer_id = row[0]
+
+        cur.execute("SELECT r2_key, filename FROM files WHERE transfer_id = %s", (transfer_id,))
+        files = cur.fetchall()
+
+    # Scan each file with ClamAV
+    for r2_key, filename in files:
+        try:
+            data = download_object(r2_key)
+            virus = scan_bytes(data)
+        except Exception as e:
+            # ClamAV unavailable — log and allow through to avoid blocking all uploads
+            write_log_event("scan_error", token, {"user_email": user["email"], "filename": filename, "error": str(e)})
+            continue
+
+        if virus:
+            if not user["is_trusted"]:
+                # Delete all files and the transfer
+                r2_keys = [f[0] for f in files]
+                delete_objects(r2_keys)
+                with get_conn() as conn:
+                    cur = conn.cursor()
+                    cur.execute("DELETE FROM transfers WHERE id = %s", (transfer_id,))
+                write_log_event("scan_blocked", token, {"user_email": user["email"], "filename": filename, "virus": virus})
+                raise HTTPException(status_code=400, detail=f"Fichier refusé : détection antivirus ({virus})")
+
+            if not acknowledge_risk:
+                write_log_event("scan_warning", token, {"user_email": user["email"], "filename": filename, "virus": virus})
+                from fastapi.responses import JSONResponse
+                return JSONResponse(
+                    status_code=202,
+                    content={"requires_acknowledgment": True, "virus": virus, "filename": filename},
+                )
+
+            write_log_event("scan_acknowledged", token, {"user_email": user["email"], "filename": filename, "virus": virus})
+
     with get_conn() as conn:
         cur = conn.cursor()
         cur.execute(
             "UPDATE transfers SET confirmed_at = NOW() WHERE token = %s AND user_id = %s AND confirmed_at IS NULL",
             (token, user["id"]),
         )
-        if cur.rowcount == 0:
-            raise HTTPException(status_code=404, detail="Transfer not found or already confirmed")
+    return Response(status_code=204)
 
 
 @app.get("/transfers", response_model=list[UserTransfer])
