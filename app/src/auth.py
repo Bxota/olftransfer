@@ -39,11 +39,11 @@ def get_current_user(session: str | None = Cookie(default=None)) -> dict:
         raise HTTPException(status_code=401, detail="Not authenticated")
     with get_conn() as conn:
         cur = conn.cursor()
-        cur.execute("SELECT id, email, is_admin, is_trusted FROM users WHERE id = %s", (user_id,))
+        cur.execute("SELECT id, email, is_admin, is_trusted, storage_quota_bytes FROM users WHERE id = %s", (user_id,))
         row = cur.fetchone()
     if not row:
         raise HTTPException(status_code=401, detail="Not authenticated")
-    return {"id": str(row[0]), "email": row[1], "is_admin": row[2], "is_trusted": row[3]}
+    return {"id": str(row[0]), "email": row[1], "is_admin": row[2], "is_trusted": row[3], "storage_quota_bytes": row[4]}
 
 
 def require_admin(user: dict = Depends(get_current_user)) -> dict:

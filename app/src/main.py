@@ -57,6 +57,14 @@ STATIC_DIR = os.path.join(os.path.dirname(__file__), "static")
 BASE_URL = os.environ.get("BASE_URL", "https://olf-transfer.bxota.com")
 
 
+def _fmt_bytes(n: int) -> str:
+    for unit in ("o", "Ko", "Mo", "Go", "To"):
+        if n < 1024:
+            return f"{n:.0f} {unit}" if unit == "o" else f"{n:.1f} {unit}"
+        n /= 1024
+    return f"{n:.1f} Po"
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     seed_admin()
@@ -237,7 +245,24 @@ def logout(response: Response):
 
 @app.get("/auth/me")
 def me(user: dict = Depends(get_current_user)):
-    return {"email": user["email"], "is_admin": user["is_admin"]}
+    with get_conn() as conn:
+        cur = conn.cursor()
+        cur.execute(
+            """
+            SELECT COALESCE(SUM(f.size_bytes), 0)
+            FROM files f
+            JOIN transfers t ON f.transfer_id = t.id
+            WHERE t.user_id = %s AND t.confirmed_at IS NOT NULL AND t.files_purged_at IS NULL
+            """,
+            (user["id"],),
+        )
+        used_bytes = int(cur.fetchone()[0])
+    return {
+        "email": user["email"],
+        "is_admin": user["is_admin"],
+        "storage_quota_bytes": user["storage_quota_bytes"],
+        "storage_used_bytes": used_bytes,
+    }
 
 
 @app.post("/auth/register")
@@ -336,9 +361,22 @@ def validate_invite(token: str):
 def list_users():
     with get_conn() as conn:
         cur = conn.cursor()
-        cur.execute("SELECT id, email, is_admin, is_trusted, created_at FROM users ORDER BY created_at")
+        cur.execute("SELECT id, email, is_admin, is_trusted, created_at, storage_quota_bytes FROM users ORDER BY created_at")
         rows = cur.fetchall()
-    return [{"id": str(r[0]), "email": r[1], "is_admin": r[2], "is_trusted": r[3], "created_at": r[4]} for r in rows]
+    return [{"id": str(r[0]), "email": r[1], "is_admin": r[2], "is_trusted": r[3], "created_at": r[4], "storage_quota_bytes": r[5]} for r in rows]
+
+
+@app.patch("/admin/users/{user_id}/quota", dependencies=[Depends(require_admin)])
+def set_user_quota(user_id: str, body: dict):
+    quota_bytes = body.get("storage_quota_bytes")
+    if not isinstance(quota_bytes, int) or quota_bytes < 0:
+        raise HTTPException(status_code=422, detail="storage_quota_bytes doit être un entier positif")
+    with get_conn() as conn:
+        cur = conn.cursor()
+        cur.execute("UPDATE users SET storage_quota_bytes = %s WHERE id = %s", (quota_bytes, user_id))
+        if cur.rowcount == 0:
+            raise HTTPException(status_code=404, detail="Utilisateur introuvable")
+    return {"ok": True}
 
 
 @app.patch("/admin/users/{user_id}/trusted", dependencies=[Depends(require_admin)])
@@ -385,6 +423,7 @@ def admin_stats(refresh: bool = Query(default=False)):
 
         cur.execute("""
             SELECT u.email,
+                   u.storage_quota_bytes,
                    (SELECT COUNT(*) FROM transfers t
                     WHERE t.user_id = u.id AND t.confirmed_at IS NOT NULL
                     AND t.files_purged_at IS NULL AND t.expires_at > NOW()) AS active_transfers,
@@ -401,10 +440,11 @@ def admin_stats(refresh: bool = Query(default=False)):
         users_stats = [
             {
                 "email": r[0],
-                "active_transfers": r[1],
-                "total_transfers": r[2],
-                "active_bytes": int(r[3]),
-                "downloads": int(r[4]),
+                "storage_quota_bytes": r[1],
+                "active_transfers": r[2],
+                "total_transfers": r[3],
+                "active_bytes": int(r[4]),
+                "downloads": int(r[5]),
             }
             for r in cur.fetchall()
         ]
@@ -473,9 +513,26 @@ def create_transfer(body: CreateTransferRequest, request: Request, user: dict = 
     password_hash = (
         hashlib.sha256(body.password.encode()).hexdigest() if body.password else None
     )
+    requested_bytes = sum(f.size_bytes for f in body.files)
 
     with get_conn() as conn:
         cur = conn.cursor()
+        cur.execute(
+            """
+            SELECT COALESCE(SUM(f.size_bytes), 0)
+            FROM files f
+            JOIN transfers t ON f.transfer_id = t.id
+            WHERE t.user_id = %s AND t.confirmed_at IS NOT NULL AND t.files_purged_at IS NULL
+            """,
+            (user["id"],),
+        )
+        used_bytes = int(cur.fetchone()[0])
+        if used_bytes + requested_bytes > user["storage_quota_bytes"]:
+            raise HTTPException(
+                status_code=507,
+                detail=f"Quota de stockage dépassé ({_fmt_bytes(used_bytes + requested_bytes)} utilisés / {_fmt_bytes(user['storage_quota_bytes'])})",
+            )
+
         cur.execute(
             """
             INSERT INTO transfers (user_id, token, expires_at, password_hash, max_downloads)

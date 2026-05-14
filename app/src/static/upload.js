@@ -7,6 +7,25 @@ let files = [];
 let fileNames = [];
 let thumbUrls = {};
 
+function formatBytes(b) {
+  if (b === 0) return '0 o';
+  const u = ['o', 'Ko', 'Mo', 'Go', 'To'];
+  const i = Math.floor(Math.log(b) / Math.log(1024));
+  return (b / Math.pow(1024, i)).toFixed(i > 0 ? 1 : 0) + ' ' + u[i];
+}
+
+function renderQuotaBar(used, quota) {
+  const el = document.getElementById('quota-info');
+  if (!el) return;
+  const pct = Math.min(100, Math.round(used / quota * 100));
+  const color = pct >= 90 ? '#EF4444' : pct >= 70 ? '#F59E0B' : 'var(--success)';
+  el.style.display = 'block';
+  el.innerHTML =
+    `<div style="font-size:11px;color:var(--subtext);margin-bottom:3px">${formatBytes(used)} / ${formatBytes(quota)}</div>` +
+    `<div style="width:110px;height:4px;background:var(--border);border-radius:2px;overflow:hidden">` +
+    `<div style="width:${pct}%;height:100%;background:${color};border-radius:2px"></div></div>`;
+}
+
 function getExt(name) {
   const i = name.lastIndexOf('.');
   return i > 0 ? name.slice(i) : '';
@@ -141,7 +160,7 @@ function renderFileList() {
 // ── Send ─────────────────────────────────────────────────────────────────────
 
 document.getElementById('sendBtn').addEventListener('click', send);
-// Afficher le lien admin si admin
+// Afficher le lien admin si admin + barre de quota
 fetch('/auth/me').then(r => r.json()).then(user => {
   if (user.is_admin) {
     const actions = document.getElementById('headerActions');
@@ -150,6 +169,9 @@ fetch('/auth/me').then(r => r.json()).then(user => {
     adminLink.className = 'btn btn-ghost btn-sm';
     adminLink.textContent = 'Admin';
     actions.insertBefore(adminLink, actions.firstChild);
+  }
+  if (user.storage_quota_bytes > 0) {
+    renderQuotaBar(user.storage_used_bytes, user.storage_quota_bytes);
   }
 }).catch(() => {});
 

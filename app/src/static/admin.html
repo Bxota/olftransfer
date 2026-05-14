@@ -155,13 +155,25 @@
           ${kpiCard('Dernier upload S3', s3Ok ? `<span style="font-size:13px">${lastUpload}</span>` : '—', '')}
         </div>`;
 
-      const tableRows = s.users.map(u => `
+      const tableRows = s.users.map(u => {
+        const pct = u.storage_quota_bytes > 0 ? Math.min(100, Math.round(u.active_bytes / u.storage_quota_bytes * 100)) : 0;
+        const barColor = pct >= 90 ? '#EF4444' : pct >= 70 ? '#F59E0B' : 'var(--success)';
+        return `
         <tr>
           <td style="padding:8px 6px;font-size:.875rem">${escHtml(u.email)}</td>
-          <td style="padding:8px 6px;font-size:.875rem;text-align:right">${formatBytes(u.active_bytes)}</td>
+          <td style="padding:8px 6px;font-size:.875rem;text-align:right">
+            <div>${formatBytes(u.active_bytes)}</div>
+            <div style="display:flex;align-items:center;justify-content:flex-end;gap:6px;margin-top:3px">
+              <div style="width:80px;height:3px;background:var(--border);border-radius:2px;overflow:hidden">
+                <div style="width:${pct}%;height:100%;background:${barColor};border-radius:2px"></div>
+              </div>
+              <span style="font-size:11px;color:var(--subtext)">${formatBytes(u.storage_quota_bytes)}</span>
+            </div>
+          </td>
           <td style="padding:8px 6px;font-size:.875rem;text-align:right">${u.active_transfers} / ${u.total_transfers}</td>
           <td style="padding:8px 6px;font-size:.875rem;text-align:right">${u.downloads}</td>
-        </tr>`).join('');
+        </tr>`;
+      }).join('');
 
       const table = `
         <p class="section-label" style="margin-bottom:8px">Par utilisateur</p>
@@ -170,7 +182,7 @@
             <thead>
               <tr style="border-bottom:1px solid var(--border)">
                 <th style="padding:6px;font-size:11px;font-weight:600;text-align:left;color:var(--subtext)">Utilisateur</th>
-                <th style="padding:6px;font-size:11px;font-weight:600;text-align:right;color:var(--subtext)">Stockage actif</th>
+                <th style="padding:6px;font-size:11px;font-weight:600;text-align:right;color:var(--subtext)">Stockage actif / Quota</th>
                 <th style="padding:6px;font-size:11px;font-weight:600;text-align:right;color:var(--subtext)">Actifs / Total</th>
                 <th style="padding:6px;font-size:11px;font-weight:600;text-align:right;color:var(--subtext)">DL</th>
               </tr>
@@ -221,6 +233,13 @@
             <div class="file-size">${u.is_admin ? 'Admin · ' : ''}${u.is_trusted ? 'Trusted · ' : ''}Membre depuis ${new Date(u.created_at).toLocaleDateString('fr-FR')}</div>
           </div>
           <button
+            class="btn btn-ghost btn-sm quota-edit"
+            data-id="${escHtml(u.id)}"
+            data-quota="${u.storage_quota_bytes}"
+            style="font-size:11px;padding:3px 8px;white-space:nowrap;color:var(--subtext)"
+            title="Modifier le quota"
+          >${formatBytes(u.storage_quota_bytes)}</button>
+          <button
             class="btn btn-ghost btn-sm trusted-toggle"
             data-id="${escHtml(u.id)}"
             data-trusted="${u.is_trusted}"
@@ -229,6 +248,28 @@
           >${u.is_trusted ? '✓ Trusted' : 'Trusted'}</button>
         </li>
       `).join('');
+
+      list.querySelectorAll('.quota-edit').forEach(btn => {
+        btn.addEventListener('click', async () => {
+          const currentGb = Math.round(parseInt(btn.dataset.quota) / 1073741824);
+          const input = prompt(`Quota pour cet utilisateur (en Go, actuellement ${currentGb} Go) :`, currentGb);
+          if (input === null) return;
+          const gb = parseFloat(input);
+          if (isNaN(gb) || gb < 0) { alert('Valeur invalide'); return; }
+          btn.disabled = true;
+          try {
+            const res = await fetch(`/admin/users/${btn.dataset.id}/quota`, {
+              method: 'PATCH',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ storage_quota_bytes: Math.round(gb * 1073741824) }),
+            });
+            if (res.ok) loadUsers();
+            else alert('Erreur lors de la mise à jour du quota');
+          } finally {
+            btn.disabled = false;
+          }
+        });
+      });
 
       list.querySelectorAll('.trusted-toggle').forEach(btn => {
         btn.addEventListener('click', async () => {

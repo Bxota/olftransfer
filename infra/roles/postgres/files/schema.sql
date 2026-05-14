@@ -86,3 +86,14 @@ BEGIN
         UPDATE transfers SET confirmed_at = created_at WHERE confirmed_at IS NULL;
     END IF;
 END $$;
+
+-- Migration : quota de stockage par utilisateur (défaut 10 Go)
+DO $$
+BEGIN
+    IF NOT EXISTS (
+        SELECT 1 FROM information_schema.columns
+        WHERE table_name = 'users' AND column_name = 'storage_quota_bytes'
+    ) THEN
+        ALTER TABLE users ADD COLUMN storage_quota_bytes BIGINT NOT NULL DEFAULT 10737418240;
+    END IF;
+END $$;
