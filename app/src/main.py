@@ -26,14 +26,30 @@ from .cron import _do_cleanup, cleanup_expired, scheduler
 from .db import get_conn
 from .email import send_download_notification, send_invite
 from .models import (
+    AbortUploadRequest,
     BatchDeleteRequest,
+    BatchDeleteResponse,
+    CompleteUploadRequest,
+    ConfirmTransferRequest,
     CreateTransferRequest,
     CreateTransferResponse,
     DownloadResponse,
     DownloadUrl,
     FileInfo,
+    InviteRequest,
+    InviteResponse,
+    InviteValidateResponse,
+    LoginRequest,
+    MeResponse,
+    OkResponse,
+    PartUrlRequest,
+    PartUrlResponse,
+    RegisterRequest,
+    SetQuotaRequest,
+    SetTrustedRequest,
     TransferInfo,
     UploadUrl,
+    UserListItem,
     UserTransfer,
 )
 from .scanner import scan_bytes
@@ -75,7 +91,30 @@ async def lifespan(app: FastAPI):
     scheduler.shutdown()
 
 
-app = FastAPI(title="olftransfer", lifespan=lifespan)
+app = FastAPI(
+    title="OlfTransfer",
+    version="1.0.0",
+    description="""
+Service de partage de fichiers sécurisé avec liens temporaires et protection par mot de passe.
+
+## Flux d'upload
+1. **`POST /transfers`** — créer un transfert, obtenir les URLs d'upload presignées
+2. Uploader les fichiers directement vers S3 via les URLs signées
+3. **`POST /transfers/{token}/confirm`** — confirmer le transfert (déclenche l'analyse antivirus)
+
+## Authentification
+Les endpoints protégés nécessitent une session cookie valide (obtenue via `POST /auth/login`).
+Les endpoints `/admin/*` sont réservés aux administrateurs.
+""",
+    openapi_tags=[
+        {"name": "Auth", "description": "Authentification et gestion de session"},
+        {"name": "Transfers", "description": "Création, consultation et suppression de transferts"},
+        {"name": "Uploads", "description": "Upload multipart pour les fichiers volumineux"},
+        {"name": "Admin", "description": "Administration — réservé aux administrateurs"},
+        {"name": "System", "description": "Santé et maintenance du service"},
+    ],
+    lifespan=lifespan,
+)
 
 _cors_origins = [o.strip().rstrip("/") for o in os.environ.get("CORS_ALLOWED_ORIGINS", BASE_URL).split(",") if o.strip()]
 app.add_middleware(
@@ -219,10 +258,10 @@ def transfer_page(token: str):
 
 # ── Auth ──────────────────────────────────────────────────────────────────────
 
-@app.post("/auth/login")
-def login(body: dict, response: Response):
-    email = body.get("email", "").lower().strip()
-    password = body.get("password", "")
+@app.post("/auth/login", tags=["Auth"], summary="Connexion", response_model=OkResponse)
+def login(body: LoginRequest, response: Response):
+    email = body.email.lower().strip()
+    password = body.password
 
     with get_conn() as conn:
         cur = conn.cursor()
@@ -237,16 +276,16 @@ def login(body: dict, response: Response):
         httponly=True, secure=True, samesite="lax",
         max_age=60 * 60 * 24 * 7,
     )
-    return {"ok": True}
+    return OkResponse()
 
 
-@app.post("/auth/logout")
+@app.post("/auth/logout", tags=["Auth"], summary="Déconnexion", response_model=OkResponse)
 def logout(response: Response):
     response.delete_cookie("session")
-    return {"ok": True}
+    return OkResponse()
 
 
-@app.get("/auth/me")
+@app.get("/auth/me", tags=["Auth"], summary="Profil de l'utilisateur connecté", response_model=MeResponse)
 def me(user: dict = Depends(get_current_user)):
     with get_conn() as conn:
         cur = conn.cursor()
@@ -260,22 +299,16 @@ def me(user: dict = Depends(get_current_user)):
             (user["id"],),
         )
         used_bytes = int(cur.fetchone()[0])
-    return {
-        "email": user["email"],
-        "is_admin": user["is_admin"],
-        "storage_quota_bytes": user["storage_quota_bytes"],
-        "storage_used_bytes": used_bytes,
-    }
+    return MeResponse(
+        email=user["email"],
+        is_admin=user["is_admin"],
+        storage_quota_bytes=user["storage_quota_bytes"],
+        storage_used_bytes=used_bytes,
+    )
 
 
-@app.post("/auth/register")
-def register(body: dict, response: Response):
-    token = body.get("token", "")
-    password = body.get("password", "")
-
-    if len(password) < 8:
-        raise HTTPException(status_code=422, detail="Mot de passe trop court (8 caractères min)")
-
+@app.post("/auth/register", tags=["Auth"], summary="Créer un compte via invitation", response_model=OkResponse)
+def register(body: RegisterRequest, response: Response):
     with get_conn() as conn:
         cur = conn.cursor()
         cur.execute(
@@ -283,7 +316,7 @@ def register(body: dict, response: Response):
             SELECT id, email FROM invitations
             WHERE token = %s AND used_at IS NULL AND expires_at > NOW()
             """,
-            (token,),
+            (body.token,),
         )
         invite = cur.fetchone()
         if not invite:
@@ -297,7 +330,7 @@ def register(body: dict, response: Response):
 
         cur.execute(
             "INSERT INTO users (email, password_hash) VALUES (%s, %s) RETURNING id",
-            (email, hash_password(password)),
+            (email, hash_password(body.password)),
         )
         user_id = cur.fetchone()[0]
 
@@ -308,14 +341,14 @@ def register(body: dict, response: Response):
         httponly=True, secure=True, samesite="lax",
         max_age=60 * 60 * 24 * 7,
     )
-    return {"ok": True}
+    return OkResponse()
 
 
 # ── Admin ─────────────────────────────────────────────────────────────────────
 
-@app.post("/admin/invite", dependencies=[Depends(require_admin)])
-def invite_user(body: dict, user: dict = Depends(require_admin)):
-    email = body.get("email", "").lower().strip()
+@app.post("/admin/invite", tags=["Admin"], summary="Envoyer une invitation", response_model=InviteResponse, dependencies=[Depends(require_admin)])
+def invite_user(body: InviteRequest, user: dict = Depends(require_admin)):
+    email = body.email.lower().strip()
     if not email or "@" not in email:
         raise HTTPException(status_code=422, detail="Email invalide")
 
@@ -340,13 +373,12 @@ def invite_user(body: dict, user: dict = Depends(require_admin)):
     try:
         send_invite(email, invite_url, user["email"])
     except Exception as e:
-        # En cas d'erreur SMTP, on retourne le lien pour l'envoyer manuellement
-        return {"ok": True, "invite_url": invite_url, "smtp_error": str(e)}
+        return InviteResponse(ok=True, invite_url=invite_url, smtp_error=str(e))
 
-    return {"ok": True, "invite_url": invite_url}
+    return InviteResponse(ok=True, invite_url=invite_url)
 
 
-@app.get("/admin/invite/{token}")
+@app.get("/admin/invite/{token}", tags=["Admin"], summary="Valider un token d'invitation", response_model=InviteValidateResponse)
 def validate_invite(token: str):
     with get_conn() as conn:
         cur = conn.cursor()
@@ -357,46 +389,40 @@ def validate_invite(token: str):
         row = cur.fetchone()
     if not row:
         raise HTTPException(status_code=400, detail="Invitation invalide ou expirée")
-    return {"email": row[0]}
+    return InviteValidateResponse(email=row[0])
 
 
-@app.get("/admin/users", dependencies=[Depends(require_admin)])
+@app.get("/admin/users", tags=["Admin"], summary="Lister les utilisateurs", response_model=list[UserListItem], dependencies=[Depends(require_admin)])
 def list_users():
     with get_conn() as conn:
         cur = conn.cursor()
         cur.execute("SELECT id, email, is_admin, is_trusted, created_at, storage_quota_bytes FROM users ORDER BY created_at")
         rows = cur.fetchall()
-    return [{"id": str(r[0]), "email": r[1], "is_admin": r[2], "is_trusted": r[3], "created_at": r[4], "storage_quota_bytes": r[5]} for r in rows]
+    return [UserListItem(id=str(r[0]), email=r[1], is_admin=r[2], is_trusted=r[3], created_at=r[4], storage_quota_bytes=r[5]) for r in rows]
 
 
-@app.patch("/admin/users/{user_id}/quota", dependencies=[Depends(require_admin)])
-def set_user_quota(user_id: str, body: dict):
-    quota_bytes = body.get("storage_quota_bytes")
-    if not isinstance(quota_bytes, int) or quota_bytes < 0:
-        raise HTTPException(status_code=422, detail="storage_quota_bytes doit être un entier positif")
+@app.patch("/admin/users/{user_id}/quota", tags=["Admin"], summary="Modifier le quota de stockage", response_model=OkResponse, dependencies=[Depends(require_admin)])
+def set_user_quota(user_id: str, body: SetQuotaRequest):
     with get_conn() as conn:
         cur = conn.cursor()
-        cur.execute("UPDATE users SET storage_quota_bytes = %s WHERE id = %s", (quota_bytes, user_id))
+        cur.execute("UPDATE users SET storage_quota_bytes = %s WHERE id = %s", (body.storage_quota_bytes, user_id))
         if cur.rowcount == 0:
             raise HTTPException(status_code=404, detail="Utilisateur introuvable")
-    return {"ok": True}
+    return OkResponse()
 
 
-@app.patch("/admin/users/{user_id}/trusted", dependencies=[Depends(require_admin)])
-def set_user_trusted(user_id: str, body: dict):
-    is_trusted = body.get("is_trusted")
-    if not isinstance(is_trusted, bool):
-        raise HTTPException(status_code=422, detail="is_trusted doit être un booléen")
+@app.patch("/admin/users/{user_id}/trusted", tags=["Admin"], summary="Modifier le statut de confiance", response_model=OkResponse, dependencies=[Depends(require_admin)])
+def set_user_trusted(user_id: str, body: SetTrustedRequest):
     with get_conn() as conn:
         cur = conn.cursor()
-        cur.execute("UPDATE users SET is_trusted = %s WHERE id = %s", (is_trusted, user_id))
+        cur.execute("UPDATE users SET is_trusted = %s WHERE id = %s", (body.is_trusted, user_id))
         if cur.rowcount == 0:
             raise HTTPException(status_code=404, detail="Utilisateur introuvable")
-    return {"ok": True}
+    return OkResponse()
 
 
-@app.get("/admin/stats", dependencies=[Depends(require_admin)])
-def admin_stats(refresh: bool = Query(default=False)):
+@app.get("/admin/stats", tags=["Admin"], summary="Statistiques globales", dependencies=[Depends(require_admin)])
+def admin_stats(refresh: bool = Query(default=False, description="Forcer le rafraîchissement du cache S3")):
     with get_conn() as conn:
         cur = conn.cursor()
 
@@ -473,14 +499,14 @@ def admin_stats(refresh: bool = Query(default=False)):
     }
 
 
-@app.post("/admin/cleanup", dependencies=[Depends(require_admin)])
+@app.post("/admin/cleanup", tags=["Admin"], summary="Déclencher le nettoyage manuellement", response_model=OkResponse, dependencies=[Depends(require_admin)])
 def trigger_cleanup():
     _do_cleanup()
-    return {"ok": True}
+    return OkResponse()
 
 
-@app.get("/admin/logs", dependencies=[Depends(require_admin)])
-def list_access_logs(prefix: str = Query(default="")):
+@app.get("/admin/logs", tags=["Admin"], summary="Lister les logs d'accès S3", dependencies=[Depends(require_admin)])
+def list_access_logs(prefix: str = Query(default="", description="Filtrer par préfixe de clé S3")):
     objects = list_log_objects(prefix=prefix)
     return [
         {
@@ -492,8 +518,8 @@ def list_access_logs(prefix: str = Query(default="")):
     ]
 
 
-@app.get("/admin/logs/content", dependencies=[Depends(require_admin)])
-def get_access_log(key: str = Query(...)):
+@app.get("/admin/logs/content", tags=["Admin"], summary="Lire le contenu d'un log", dependencies=[Depends(require_admin)])
+def get_access_log(key: str = Query(..., description="Clé S3 du fichier de log")):
     if not os.environ.get("S3_LOGS_BUCKET"):
         raise HTTPException(status_code=503, detail="S3_LOGS_BUCKET non configuré")
     try:
@@ -502,14 +528,16 @@ def get_access_log(key: str = Query(...)):
         raise HTTPException(status_code=500, detail=str(e))
 
 
-# ── API ───────────────────────────────────────────────────────────────────────
+# ── System ────────────────────────────────────────────────────────────────────
 
-@app.get("/health")
+@app.get("/health", tags=["System"], summary="État du service")
 def health():
     return {"status": "ok"}
 
 
-@app.post("/transfers", response_model=CreateTransferResponse, status_code=201)
+# ── Transfers ─────────────────────────────────────────────────────────────────
+
+@app.post("/transfers", tags=["Transfers"], summary="Créer un transfert", response_model=CreateTransferResponse, status_code=201)
 def create_transfer(body: CreateTransferRequest, request: Request, user: dict = Depends(get_current_user)):
     token = secrets.token_urlsafe(32)
     expires_at = datetime.now(timezone.utc) + timedelta(hours=body.expires_in_hours)
@@ -587,62 +615,8 @@ def create_transfer(body: CreateTransferRequest, request: Request, user: dict = 
     )
 
 
-@app.post("/uploads/{file_id}/part-url")
-def get_part_url(file_id: str, body: dict, user: dict = Depends(get_current_user)):
-    upload_id = body.get("upload_id")
-    part_number = body.get("part_number")
-    if not upload_id or not isinstance(part_number, int):
-        raise HTTPException(status_code=422, detail="upload_id et part_number requis")
-    with get_conn() as conn:
-        cur = conn.cursor()
-        cur.execute(
-            "SELECT f.r2_key FROM files f JOIN transfers t ON f.transfer_id = t.id WHERE f.id = %s AND t.user_id = %s",
-            (file_id, user["id"]),
-        )
-        row = cur.fetchone()
-    if not row:
-        raise HTTPException(status_code=404)
-    return {"url": presigned_upload_part(row[0], upload_id, part_number)}
-
-
-@app.post("/uploads/{file_id}/complete", status_code=204)
-def complete_upload(file_id: str, body: dict, user: dict = Depends(get_current_user)):
-    upload_id = body.get("upload_id")
-    if not upload_id:
-        raise HTTPException(status_code=422, detail="upload_id requis")
-    with get_conn() as conn:
-        cur = conn.cursor()
-        cur.execute(
-            "SELECT f.r2_key FROM files f JOIN transfers t ON f.transfer_id = t.id WHERE f.id = %s AND t.user_id = %s",
-            (file_id, user["id"]),
-        )
-        row = cur.fetchone()
-    if not row:
-        raise HTTPException(status_code=404)
-    complete_multipart_upload(row[0], upload_id)
-
-
-@app.post("/uploads/{file_id}/abort", status_code=204)
-def abort_upload(file_id: str, body: dict, user: dict = Depends(get_current_user)):
-    upload_id = body.get("upload_id")
-    if not upload_id:
-        raise HTTPException(status_code=422, detail="upload_id requis")
-    with get_conn() as conn:
-        cur = conn.cursor()
-        cur.execute(
-            "SELECT f.r2_key FROM files f JOIN transfers t ON f.transfer_id = t.id WHERE f.id = %s AND t.user_id = %s",
-            (file_id, user["id"]),
-        )
-        row = cur.fetchone()
-    if not row:
-        raise HTTPException(status_code=404)
-    abort_multipart_upload(row[0], upload_id)
-
-
-@app.post("/transfers/{token}/confirm")
-def confirm_transfer(token: str, body: dict = None, user: dict = Depends(get_current_user)):
-    acknowledge_risk = (body or {}).get("acknowledge_risk", False)
-
+@app.post("/transfers/{token}/confirm", tags=["Transfers"], summary="Confirmer un transfert (déclenche l'antivirus)")
+def confirm_transfer(token: str, body: ConfirmTransferRequest, user: dict = Depends(get_current_user)):
     with get_conn() as conn:
         cur = conn.cursor()
         cur.execute(
@@ -657,19 +631,16 @@ def confirm_transfer(token: str, body: dict = None, user: dict = Depends(get_cur
         cur.execute("SELECT r2_key, filename FROM files WHERE transfer_id = %s", (transfer_id,))
         files = cur.fetchall()
 
-    # Scan each file with ClamAV
     for r2_key, filename in files:
         try:
             data = download_object(r2_key)
             virus = scan_bytes(data)
         except Exception as e:
-            # ClamAV unavailable — log and allow through to avoid blocking all uploads
             write_log_event("scan_error", token, {"user_email": user["email"], "filename": filename, "error": str(e)})
             continue
 
         if virus:
             if not user["is_trusted"]:
-                # Delete all files and the transfer
                 r2_keys = [f[0] for f in files]
                 delete_objects(r2_keys)
                 with get_conn() as conn:
@@ -678,7 +649,7 @@ def confirm_transfer(token: str, body: dict = None, user: dict = Depends(get_cur
                 write_log_event("scan_blocked", token, {"user_email": user["email"], "filename": filename, "virus": virus})
                 raise HTTPException(status_code=400, detail=f"Fichier refusé : détection antivirus ({virus})")
 
-            if not acknowledge_risk:
+            if not body.acknowledge_risk:
                 write_log_event("scan_warning", token, {"user_email": user["email"], "filename": filename, "virus": virus})
                 from fastapi.responses import JSONResponse
                 return JSONResponse(
@@ -697,7 +668,7 @@ def confirm_transfer(token: str, body: dict = None, user: dict = Depends(get_cur
     return Response(status_code=204)
 
 
-@app.get("/transfers", response_model=list[UserTransfer])
+@app.get("/transfers", tags=["Transfers"], summary="Lister mes transferts", response_model=list[UserTransfer])
 def list_my_transfers(user: dict = Depends(get_current_user)):
     now = datetime.now(timezone.utc)
     with get_conn() as conn:
@@ -735,7 +706,7 @@ def list_my_transfers(user: dict = Depends(get_current_user)):
     return result
 
 
-@app.delete("/transfers", status_code=200)
+@app.delete("/transfers", tags=["Transfers"], summary="Supprimer plusieurs transferts", response_model=BatchDeleteResponse, status_code=200)
 def batch_delete_transfers(payload: BatchDeleteRequest, request: Request, user: dict = Depends(get_current_user)):
     ip = request.headers.get("x-forwarded-for", request.client.host if request.client else None)
     deleted_tokens = []
@@ -761,10 +732,10 @@ def batch_delete_transfers(payload: BatchDeleteRequest, request: Request, user: 
             "ip": ip,
         })
         deleted_tokens.append(token)
-    return {"deleted": deleted_tokens}
+    return BatchDeleteResponse(deleted=deleted_tokens)
 
 
-@app.delete("/transfers/{token}", status_code=204)
+@app.delete("/transfers/{token}", tags=["Transfers"], summary="Supprimer un transfert", status_code=204)
 def delete_transfer(token: str, request: Request, user: dict = Depends(get_current_user)):
     with get_conn() as conn:
         cur = conn.cursor()
@@ -792,7 +763,7 @@ def delete_transfer(token: str, request: Request, user: dict = Depends(get_curre
     })
 
 
-@app.get("/transfers/{token}", response_model=TransferInfo)
+@app.get("/transfers/{token}", tags=["Transfers"], summary="Informations d'un transfert public", response_model=TransferInfo)
 def get_transfer(token: str):
     with get_conn() as conn:
         cur = conn.cursor()
@@ -824,8 +795,8 @@ def get_transfer(token: str):
     )
 
 
-@app.get("/transfers/{token}/download", response_model=DownloadResponse)
-def download_transfer(token: str, request: Request, password: str | None = Query(default=None)):
+@app.get("/transfers/{token}/download", tags=["Transfers"], summary="Obtenir les URLs de téléchargement", response_model=DownloadResponse)
+def download_transfer(token: str, request: Request, password: str | None = Query(default=None, description="Mot de passe si le transfert est protégé")):
     rows, sender_email = _download_file_rows(token, password)
 
     file_count = len(rows)
@@ -848,8 +819,8 @@ def download_transfer(token: str, request: Request, password: str | None = Query
     )
 
 
-@app.get("/transfers/{token}/download-zip")
-def download_transfer_zip(token: str, password: str | None = Query(default=None)):
+@app.get("/transfers/{token}/download-zip", tags=["Transfers"], summary="Télécharger tous les fichiers en ZIP")
+def download_transfer_zip(token: str, password: str | None = Query(default=None, description="Mot de passe si le transfert est protégé")):
     rows, sender_email = _download_file_rows(token, password)
 
     if len(rows) <= 1:
@@ -869,3 +840,47 @@ def download_transfer_zip(token: str, password: str | None = Query(default=None)
         filename=f"{token}.zip",
         background=BackgroundTask(_cleanup_and_notify, zip_path),
     )
+
+
+# ── Uploads ───────────────────────────────────────────────────────────────────
+
+@app.post("/uploads/{file_id}/part-url", tags=["Uploads"], summary="Obtenir l'URL presignée d'une partie multipart", response_model=PartUrlResponse)
+def get_part_url(file_id: str, body: PartUrlRequest, user: dict = Depends(get_current_user)):
+    with get_conn() as conn:
+        cur = conn.cursor()
+        cur.execute(
+            "SELECT f.r2_key FROM files f JOIN transfers t ON f.transfer_id = t.id WHERE f.id = %s AND t.user_id = %s",
+            (file_id, user["id"]),
+        )
+        row = cur.fetchone()
+    if not row:
+        raise HTTPException(status_code=404)
+    return PartUrlResponse(url=presigned_upload_part(row[0], body.upload_id, body.part_number))
+
+
+@app.post("/uploads/{file_id}/complete", tags=["Uploads"], summary="Finaliser un upload multipart", status_code=204)
+def complete_upload(file_id: str, body: CompleteUploadRequest, user: dict = Depends(get_current_user)):
+    with get_conn() as conn:
+        cur = conn.cursor()
+        cur.execute(
+            "SELECT f.r2_key FROM files f JOIN transfers t ON f.transfer_id = t.id WHERE f.id = %s AND t.user_id = %s",
+            (file_id, user["id"]),
+        )
+        row = cur.fetchone()
+    if not row:
+        raise HTTPException(status_code=404)
+    complete_multipart_upload(row[0], body.upload_id)
+
+
+@app.post("/uploads/{file_id}/abort", tags=["Uploads"], summary="Annuler un upload multipart", status_code=204)
+def abort_upload(file_id: str, body: AbortUploadRequest, user: dict = Depends(get_current_user)):
+    with get_conn() as conn:
+        cur = conn.cursor()
+        cur.execute(
+            "SELECT f.r2_key FROM files f JOIN transfers t ON f.transfer_id = t.id WHERE f.id = %s AND t.user_id = %s",
+            (file_id, user["id"]),
+        )
+        row = cur.fetchone()
+    if not row:
+        raise HTTPException(status_code=404)
+    abort_multipart_upload(row[0], body.upload_id)
