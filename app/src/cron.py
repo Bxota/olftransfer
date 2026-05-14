@@ -1,7 +1,7 @@
 import logging
 from apscheduler.schedulers.background import BackgroundScheduler
 from .db import get_conn
-from .storage import delete_objects, write_log_event
+from .storage import abort_multipart_upload, delete_objects, write_log_event
 
 logger = logging.getLogger(__name__)
 scheduler = BackgroundScheduler()
@@ -47,12 +47,38 @@ def _do_cleanup():
             f"Cleanup: purged {purged} expired transfer(s), {len(r2_keys)} S3 object(s)"
         )
 
-        # Supprimer les transfers non confirmés depuis plus de 2 heures (upload échoué)
+        # Aborter les uploads multipart orphelins (transfers abandonnés depuis 48h)
+        cur.execute("""
+            SELECT f.r2_key, f.multipart_upload_id
+            FROM files f
+            JOIN transfers t ON f.transfer_id = t.id
+            WHERE t.confirmed_at IS NULL
+              AND f.multipart_upload_id IS NOT NULL
+              AND t.created_at < NOW() - INTERVAL '48 hours'
+        """)
+        for r2_key, mp_id in cur.fetchall():
+            abort_multipart_upload(r2_key, mp_id)
+
+        # Supprimer les transfers non confirmés :
+        # - sans fichiers multipart : après 2h (upload petit fichier échoué)
+        # - avec fichiers multipart : après 48h (fenêtre de reprise)
         cur.execute("""
             DELETE FROM transfers
             WHERE confirmed_at IS NULL AND created_at < NOW() - INTERVAL '2 hours'
+            AND NOT EXISTS (
+                SELECT 1 FROM files f
+                WHERE f.transfer_id = transfers.id AND f.multipart_upload_id IS NOT NULL
+            )
         """)
-        abandoned = cur.rowcount
+        abandoned_small = cur.rowcount
+
+        cur.execute("""
+            DELETE FROM transfers
+            WHERE confirmed_at IS NULL AND created_at < NOW() - INTERVAL '48 hours'
+        """)
+        abandoned_large = cur.rowcount
+
+        abandoned = abandoned_small + abandoned_large
         if abandoned:
             logger.info(
                 f"Cleanup: deleted {abandoned} abandoned (unconfirmed) transfer(s)"

@@ -44,7 +44,10 @@ from .models import (
     OkResponse,
     PartUrlRequest,
     PartUrlResponse,
+    PendingTransferInfo,
     RegisterRequest,
+    ResumeTransferResponse,
+    ResumeUploadInfo,
     SetQuotaRequest,
     SetTrustedRequest,
     TransferInfo,
@@ -63,6 +66,7 @@ from .storage import (
     get_client,
     get_log_content,
     list_log_objects,
+    list_upload_parts,
     MULTIPART_THRESHOLD,
     presigned_download_url,
     presigned_upload_part,
@@ -576,16 +580,16 @@ def create_transfer(body: CreateTransferRequest, request: Request, user: dict = 
         uploads = []
         for f in body.files:
             r2_key = f"{transfer_id}/{secrets.token_hex(8)}_{f.filename}"
+            mp_upload_id = create_multipart_upload(r2_key, f.mime_type) if f.size_bytes >= MULTIPART_THRESHOLD else None
             cur.execute(
                 """
-                INSERT INTO files (transfer_id, filename, size_bytes, mime_type, r2_key)
-                VALUES (%s, %s, %s, %s, %s) RETURNING id
+                INSERT INTO files (transfer_id, filename, size_bytes, mime_type, r2_key, multipart_upload_id)
+                VALUES (%s, %s, %s, %s, %s, %s) RETURNING id
                 """,
-                (transfer_id, f.filename, f.size_bytes, f.mime_type, r2_key),
+                (transfer_id, f.filename, f.size_bytes, f.mime_type, r2_key, mp_upload_id),
             )
             file_id = cur.fetchone()[0]
-            if f.size_bytes >= MULTIPART_THRESHOLD:
-                mp_upload_id = create_multipart_upload(r2_key, f.mime_type)
+            if mp_upload_id:
                 uploads.append(UploadUrl(
                     file_id=str(file_id),
                     filename=f.filename,
@@ -761,6 +765,88 @@ def delete_transfer(token: str, request: Request, user: dict = Depends(get_curre
         "reason": "manual",
         "ip": request.headers.get("x-forwarded-for", request.client.host if request.client else None),
     })
+
+
+@app.get("/transfers/pending", tags=["Transfers"], summary="Transferts en attente de confirmation", response_model=list[PendingTransferInfo])
+def list_pending_transfers(user: dict = Depends(get_current_user)):
+    with get_conn() as conn:
+        cur = conn.cursor()
+        cur.execute(
+            """
+            SELECT id, token, created_at
+            FROM transfers
+            WHERE user_id = %s AND confirmed_at IS NULL AND expires_at > NOW()
+            ORDER BY created_at DESC
+            """,
+            (user["id"],),
+        )
+        transfers = cur.fetchall()
+        result = []
+        for t_id, token, created_at in transfers:
+            cur.execute(
+                "SELECT id, filename, size_bytes FROM files WHERE transfer_id = %s",
+                (t_id,),
+            )
+            files = [{"file_id": str(r[0]), "filename": r[1], "size_bytes": r[2]} for r in cur.fetchall()]
+            if files:
+                result.append({"token": token, "created_at": created_at, "files": files})
+    return result
+
+
+@app.get("/transfers/{token}/resume", tags=["Transfers"], summary="État d'un upload interrompu", response_model=ResumeTransferResponse)
+def resume_transfer(token: str, user: dict = Depends(get_current_user)):
+    with get_conn() as conn:
+        cur = conn.cursor()
+        cur.execute(
+            "SELECT id FROM transfers WHERE token = %s AND user_id = %s AND confirmed_at IS NULL AND expires_at > NOW()",
+            (token, user["id"]),
+        )
+        row = cur.fetchone()
+        if not row:
+            raise HTTPException(status_code=404, detail="Transfer not found or already confirmed")
+        transfer_id = row[0]
+
+        cur.execute(
+            "SELECT id, filename, size_bytes, mime_type, r2_key, multipart_upload_id FROM files WHERE transfer_id = %s",
+            (transfer_id,),
+        )
+        file_rows = cur.fetchall()
+
+    uploads = []
+    for file_id, filename, size_bytes, mime_type, r2_key, mp_upload_id in file_rows:
+        if mp_upload_id:
+            try:
+                completed_parts = list_upload_parts(r2_key, mp_upload_id)
+            except Exception:
+                # L'upload S3 a expiré — en créer un nouveau
+                mp_upload_id = create_multipart_upload(r2_key, mime_type)
+                with get_conn() as conn:
+                    cur = conn.cursor()
+                    cur.execute(
+                        "UPDATE files SET multipart_upload_id = %s WHERE id = %s",
+                        (mp_upload_id, file_id),
+                    )
+                completed_parts = []
+            uploads.append(ResumeUploadInfo(
+                file_id=str(file_id),
+                filename=filename,
+                size_bytes=size_bytes,
+                multipart_upload_id=mp_upload_id,
+                completed_parts=completed_parts,
+            ))
+        else:
+            uploads.append(ResumeUploadInfo(
+                file_id=str(file_id),
+                filename=filename,
+                size_bytes=size_bytes,
+                upload_url=presigned_upload_url(r2_key, mime_type),
+            ))
+
+    return ResumeTransferResponse(
+        token=token,
+        share_url=f"{BASE_URL}/t/{token}",
+        uploads=uploads,
+    )
 
 
 @app.get("/transfers/{token}", tags=["Transfers"], summary="Informations d'un transfert public", response_model=TransferInfo)

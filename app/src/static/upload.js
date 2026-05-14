@@ -232,6 +232,138 @@ function updateSessionProgress(fileId, completedParts) {
   }
 }
 
+// ── Reprise via le serveur ────────────────────────────────────────────────────
+
+let pendingTransfer = null;
+
+async function checkPendingTransfers() {
+  if (getSession()) return; // localStorage gère déjà la reprise
+  try {
+    const res = await fetch('/transfers/pending');
+    if (!res.ok) return;
+    const pending = await res.json();
+    if (pending.length === 0) return;
+    pendingTransfer = pending[0];
+    const names = pendingTransfer.files.map(f => f.filename).join(', ');
+    document.getElementById('resume-info').textContent = names;
+    document.getElementById('resume-banner').classList.remove('hidden');
+  } catch {}
+}
+
+document.getElementById('resume-dismiss-btn').addEventListener('click', () => {
+  document.getElementById('resume-banner').classList.add('hidden');
+  pendingTransfer = null;
+});
+
+document.getElementById('resume-btn').addEventListener('click', () => {
+  if (!pendingTransfer) return;
+  const input = document.createElement('input');
+  input.type = 'file';
+  input.multiple = pendingTransfer.files.length > 1;
+  input.onchange = async () => { await resumeUpload(pendingTransfer, [...input.files]); };
+  input.click();
+});
+
+async function resumeUpload(pending, selectedFiles) {
+  const resumeErrorEl = document.getElementById('resume-error');
+  resumeErrorEl.classList.add('hidden');
+
+  try {
+    const resumeRes = await fetch(`/transfers/${pending.token}/resume`);
+    if (!resumeRes.ok) throw new Error('Impossible de récupérer l\'état du transfert.');
+    const resumeData = await resumeRes.json();
+
+    if (selectedFiles.length !== resumeData.uploads.length) {
+      throw new Error(`Nombre de fichiers incorrect (attendu : ${resumeData.uploads.length}).`);
+    }
+
+    // Associer les fichiers sélectionnés aux uploads par taille (tri croissant)
+    const sortedUploads = [...resumeData.uploads].sort((a, b) => a.size_bytes - b.size_bytes);
+    const sortedSelected = [...selectedFiles].sort((a, b) => a.size - b.size);
+
+    if (sortedUploads.some((u, i) => sortedSelected[i].size !== u.size_bytes)) {
+      throw new Error('Les fichiers sélectionnés ne correspondent pas au transfert interrompu.');
+    }
+
+    const uploadToFile = new Map(sortedUploads.map((u, i) => [u.file_id, sortedSelected[i]]));
+    const orderedFiles = resumeData.uploads.map(u => uploadToFile.get(u.file_id));
+
+    // Construire la session localStorage complète avant de démarrer les uploads
+    const session = { token: pending.token, share_url: resumeData.share_url, files: [] };
+    resumeData.uploads.forEach((u, i) => {
+      if (u.multipart_upload_id) {
+        session.files.push({
+          file_id: u.file_id,
+          filename: u.filename,
+          upload_id: u.multipart_upload_id,
+          total_parts: Math.ceil(orderedFiles[i].size / CHUNK_SIZE),
+          completed_parts: u.completed_parts,
+        });
+      }
+    });
+    if (session.files.length > 0) localStorage.setItem('mp_session', JSON.stringify(session));
+
+    files = orderedFiles;
+    fileNames = resumeData.uploads.map(u => {
+      const i = u.filename.lastIndexOf('.');
+      return i > 0 ? u.filename.slice(0, i) : u.filename;
+    });
+
+    document.getElementById('resume-banner').classList.add('hidden');
+    document.getElementById('step-select').classList.add('hidden');
+    document.getElementById('step-uploading').classList.remove('hidden');
+    renderProgressList();
+
+    for (let i = 0; i < resumeData.uploads.length; i++) {
+      const upload = resumeData.uploads[i];
+      if (upload.multipart_upload_id) {
+        await uploadFileMultipart(orderedFiles[i], upload.file_id, upload.multipart_upload_id, i);
+      } else {
+        await uploadFileSingle(orderedFiles[i], upload.upload_url, i);
+      }
+    }
+
+    let confirmRes = await fetch(`/transfers/${pending.token}/confirm`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({}),
+    });
+
+    if (confirmRes.status === 202) {
+      const warn = await confirmRes.json();
+      const acknowledged = await showVirusWarning(warn.filename, warn.virus);
+      if (!acknowledged) throw new Error('Transfert annulé.');
+      confirmRes = await fetch(`/transfers/${pending.token}/confirm`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ acknowledge_risk: true }),
+      });
+    }
+
+    if (!confirmRes.ok) {
+      const detail = await confirmRes.json().then(d => d.detail).catch(() => 'Erreur lors de la confirmation');
+      throw new Error(detail);
+    }
+
+    clearSession();
+    pendingTransfer = null;
+
+    document.getElementById('step-uploading').classList.add('hidden');
+    document.getElementById('step-done').classList.remove('hidden');
+    const linkEl = document.getElementById('shareLink');
+    linkEl.textContent = resumeData.share_url;
+    linkEl.href = resumeData.share_url;
+    loadHistory();
+
+  } catch (err) {
+    document.getElementById('resume-banner').classList.remove('hidden');
+    document.getElementById('step-select').classList.remove('hidden');
+    document.getElementById('step-uploading').classList.add('hidden');
+    resumeErrorEl.textContent = err.message;
+    resumeErrorEl.classList.remove('hidden');
+  }
+}
+
 // ── Send ─────────────────────────────────────────────────────────────────────
 
 async function send() {
@@ -676,6 +808,7 @@ function formatDate(d) {
 
 document.getElementById('refreshHistoryBtn').addEventListener('click', loadHistory);
 loadHistory();
+checkPendingTransfers();
 
 // ── Copier le lien ────────────────────────────────────────────────────────────
 

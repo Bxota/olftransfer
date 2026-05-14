@@ -27,6 +27,26 @@
   <main class="page">
     <div class="page-narrow">
 
+      <!-- Bannière de reprise d'upload interrompu -->
+      <div id="resume-banner" class="hidden" style="margin-bottom:16px;">
+        <div class="card" style="border-color:#F59E0B;background:#FFFBEB;">
+          <div class="card-body" style="display:flex;align-items:center;gap:12px;flex-wrap:wrap;padding:14px 16px;">
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#D97706" stroke-width="2.5" style="flex-shrink:0">
+              <circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/>
+            </svg>
+            <div style="flex:1;min-width:0">
+              <p style="font-weight:600;font-size:14px;margin:0 0 2px;color:#92400E">Transfert interrompu</p>
+              <p style="font-size:12px;margin:0;color:#B45309;white-space:nowrap;overflow:hidden;text-overflow:ellipsis" id="resume-info"></p>
+            </div>
+            <div style="display:flex;gap:8px;flex-shrink:0">
+              <button class="btn btn-ghost btn-sm" id="resume-dismiss-btn">Ignorer</button>
+              <button class="btn btn-primary btn-sm" id="resume-btn" style="background:#D97706;border-color:#D97706">Reprendre</button>
+            </div>
+          </div>
+          <p id="resume-error" class="hidden" style="color:#EF4444;font-size:12px;margin:0;padding:0 16px 12px;"></p>
+        </div>
+      </div>
+
       <!-- Étape 1 : sélection des fichiers -->
       <div id="step-select">
         <div class="card">

@@ -97,3 +97,14 @@ BEGIN
         ALTER TABLE users ADD COLUMN storage_quota_bytes BIGINT NOT NULL DEFAULT 10737418240;
     END IF;
 END $$;
+
+-- Migration : multipart_upload_id pour la reprise des uploads interrompus
+DO $$
+BEGIN
+    IF NOT EXISTS (
+        SELECT 1 FROM information_schema.columns
+        WHERE table_name = 'files' AND column_name = 'multipart_upload_id'
+    ) THEN
+        ALTER TABLE files ADD COLUMN multipart_upload_id VARCHAR;
+    END IF;
+END $$;

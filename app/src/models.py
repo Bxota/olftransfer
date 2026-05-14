@@ -157,3 +157,30 @@ class BatchDeleteRequest(BaseModel):
 
 class BatchDeleteResponse(BaseModel):
     deleted: list[str]
+
+
+class PendingFileInfo(BaseModel):
+    file_id: str
+    filename: str
+    size_bytes: int
+
+
+class PendingTransferInfo(BaseModel):
+    token: str
+    created_at: datetime
+    files: list[PendingFileInfo]
+
+
+class ResumeUploadInfo(BaseModel):
+    file_id: str
+    filename: str
+    size_bytes: int
+    multipart_upload_id: str | None = None
+    upload_url: str | None = None
+    completed_parts: list[int] = []
+
+
+class ResumeTransferResponse(BaseModel):
+    token: str
+    share_url: str
+    uploads: list[ResumeUploadInfo]

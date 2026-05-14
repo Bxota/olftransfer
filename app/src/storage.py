@@ -174,6 +174,14 @@ def abort_multipart_upload(object_key: str, upload_id: str) -> None:
         pass
 
 
+def list_upload_parts(object_key: str, upload_id: str) -> list[int]:
+    parts = []
+    paginator = get_client().get_paginator("list_parts")
+    for page in paginator.paginate(Bucket=_bucket(), Key=object_key, UploadId=upload_id):
+        parts.extend(p["PartNumber"] for p in page.get("Parts", []))
+    return parts
+
+
 def download_object(object_key: str) -> bytes:
     response = get_client().get_object(Bucket=_bucket(), Key=object_key)
     return response["Body"].read()
