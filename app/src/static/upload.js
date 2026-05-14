@@ -472,8 +472,90 @@ function showVirusWarning(filename, virus) {
 
 // ── Historique ────────────────────────────────────────────────────────────────
 
+const selectedTokens = new Set();
+
+function updateBulkBar() {
+  const content = document.getElementById('historyContent');
+  const bar = document.getElementById('bulkBar');
+  const count = selectedTokens.size;
+  const countEl = document.getElementById('bulkCount');
+  const selectAllChk = document.getElementById('selectAllChk');
+  const allChks = content.querySelectorAll('.history-chk');
+
+  if (count === 0) {
+    bar.style.display = 'none';
+    selectAllChk.checked = false;
+    selectAllChk.indeterminate = false;
+  } else {
+    bar.style.display = 'flex';
+    countEl.textContent = `${count} sélectionné${count > 1 ? 's' : ''}`;
+    if (count === allChks.length) {
+      selectAllChk.checked = true;
+      selectAllChk.indeterminate = false;
+    } else {
+      selectAllChk.checked = false;
+      selectAllChk.indeterminate = true;
+    }
+  }
+}
+
+document.getElementById('selectAllChk').addEventListener('change', (e) => {
+  const content = document.getElementById('historyContent');
+  const checked = e.target.checked;
+  content.querySelectorAll('.history-chk').forEach(chk => {
+    chk.checked = checked;
+    const item = chk.closest('.history-item');
+    if (checked) {
+      selectedTokens.add(chk.dataset.token);
+      item.classList.add('selected');
+    } else {
+      selectedTokens.delete(chk.dataset.token);
+      item.classList.remove('selected');
+    }
+  });
+  updateBulkBar();
+});
+
+document.getElementById('bulkDeleteBtn').addEventListener('click', async () => {
+  const tokens = [...selectedTokens];
+  if (tokens.length === 0) return;
+  if (!confirm(`Supprimer ${tokens.length} transfert${tokens.length > 1 ? 's' : ''} ? Cette action est irréversible.`)) return;
+
+  const btn = document.getElementById('bulkDeleteBtn');
+  btn.disabled = true;
+
+  try {
+    const res = await fetch('/transfers', {
+      method: 'DELETE',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ tokens }),
+    });
+    if (!res.ok) throw new Error();
+    const { deleted } = await res.json();
+
+    const content = document.getElementById('historyContent');
+    deleted.forEach(token => {
+      const item = content.querySelector(`.history-item[data-token="${token}"]`);
+      if (item) item.remove();
+      selectedTokens.delete(token);
+    });
+
+    if (!content.querySelector('.history-item')) {
+      content.innerHTML = '<div class="card-body" style="padding-top:0;color:var(--subtext);font-size:13px;text-align:center;">Aucun transfert pour le moment.</div>';
+    }
+    updateBulkBar();
+  } catch {
+    alert('Impossible de supprimer les transferts.');
+  } finally {
+    btn.disabled = false;
+  }
+});
+
 async function loadHistory() {
   const content = document.getElementById('historyContent');
+  selectedTokens.clear();
+  updateBulkBar();
+
   try {
     const res = await fetch('/transfers');
     if (!res.ok) throw new Error();
@@ -508,6 +590,9 @@ async function loadHistory() {
 
       return `
         <div class="history-item" data-token="${escapeHtml(t.token)}">
+          <label class="history-chk-wrap">
+            <input type="checkbox" class="history-chk" data-token="${escapeHtml(t.token)}">
+          </label>
           <div class="history-main">
             <div class="history-files">${filenames}</div>
             <div class="history-meta">
@@ -532,6 +617,20 @@ async function loadHistory() {
       `;
     }).join('');
 
+    content.querySelectorAll('.history-chk').forEach(chk => {
+      chk.addEventListener('change', () => {
+        const item = chk.closest('.history-item');
+        if (chk.checked) {
+          selectedTokens.add(chk.dataset.token);
+          item.classList.add('selected');
+        } else {
+          selectedTokens.delete(chk.dataset.token);
+          item.classList.remove('selected');
+        }
+        updateBulkBar();
+      });
+    });
+
     content.querySelectorAll('.history-copy').forEach(btn => {
       btn.addEventListener('click', () => {
         navigator.clipboard.writeText(btn.dataset.url).then(() => {
@@ -549,7 +648,10 @@ async function loadHistory() {
         try {
           const res = await fetch(`/transfers/${btn.dataset.token}`, { method: 'DELETE' });
           if (!res.ok) throw new Error();
-          btn.closest('.history-item').remove();
+          const item = btn.closest('.history-item');
+          selectedTokens.delete(btn.dataset.token);
+          item.remove();
+          updateBulkBar();
           if (!content.querySelector('.history-item')) {
             content.innerHTML = '<div class="card-body" style="padding-top:0;color:var(--subtext);font-size:13px;text-align:center;">Aucun transfert pour le moment.</div>';
           }

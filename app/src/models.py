@@ -63,3 +63,7 @@ class UserTransfer(BaseModel):
     max_downloads: int | None
     has_password: bool
     files: list[FileInfo]
+
+
+class BatchDeleteRequest(BaseModel):
+    tokens: list[str]

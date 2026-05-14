@@ -26,6 +26,7 @@ from .cron import _do_cleanup, cleanup_expired, scheduler
 from .db import get_conn
 from .email import send_download_notification, send_invite
 from .models import (
+    BatchDeleteRequest,
     CreateTransferRequest,
     CreateTransferResponse,
     DownloadResponse,
@@ -732,6 +733,35 @@ def list_my_transfers(user: dict = Depends(get_current_user)):
                 files=files,
             ))
     return result
+
+
+@app.delete("/transfers", status_code=200)
+def batch_delete_transfers(payload: BatchDeleteRequest, request: Request, user: dict = Depends(get_current_user)):
+    ip = request.headers.get("x-forwarded-for", request.client.host if request.client else None)
+    deleted_tokens = []
+    for token in payload.tokens:
+        with get_conn() as conn:
+            cur = conn.cursor()
+            cur.execute(
+                "SELECT id, files_purged_at FROM transfers WHERE token = %s AND user_id = %s AND confirmed_at IS NOT NULL",
+                (token, user["id"]),
+            )
+            row = cur.fetchone()
+            if not row:
+                continue
+            transfer_id, files_purged_at = row
+            if not files_purged_at:
+                cur.execute("SELECT r2_key FROM files WHERE transfer_id = %s", (transfer_id,))
+                r2_keys = [r[0] for r in cur.fetchall()]
+                delete_objects(r2_keys)
+            cur.execute("DELETE FROM transfers WHERE id = %s", (transfer_id,))
+        write_log_event("transfer_deleted", token, {
+            "user_email": user["email"],
+            "reason": "manual_batch",
+            "ip": ip,
+        })
+        deleted_tokens.append(token)
+    return {"deleted": deleted_tokens}
 
 
 @app.delete("/transfers/{token}", status_code=204)

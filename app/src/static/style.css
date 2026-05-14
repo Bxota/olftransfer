@@ -290,11 +290,48 @@ body {
 .login-title { font-size: 18px; font-weight: 700; margin-bottom: 6px; }
 .login-sub { font-size: 14px; color: var(--subtext); margin-bottom: 28px; }
 
+/* ── Bulk actions bar ── */
+#bulkBar {
+  display: flex; align-items: center; justify-content: space-between;
+  padding: 10px 28px;
+  border-top: 1px solid var(--border);
+  background: var(--bg);
+}
+
+.bulk-select-label {
+  display: flex; align-items: center; gap: 8px;
+  cursor: pointer; font-size: 13px; color: var(--subtext);
+  user-select: none;
+}
+.bulk-select-label input[type="checkbox"] {
+  width: 15px; height: 15px; cursor: pointer; accent-color: var(--primary);
+}
+
+#bulkCount { font-size: 13px; color: var(--subtext); }
+
+.bulk-delete-btn {
+  display: flex; align-items: center; gap: 6px;
+  padding: 6px 12px; border-radius: 7px; font-size: 12px; font-weight: 500;
+  background: #FEF2F2; color: #991B1B; border: 1px solid #FECACA;
+  cursor: pointer; transition: background .15s, border-color .15s;
+}
+.bulk-delete-btn:hover { background: #FEE2E2; border-color: #FCA5A5; }
+.bulk-delete-btn:disabled { opacity: 0.5; cursor: not-allowed; }
+
 /* ── History ── */
 .history-item {
   display: flex; align-items: center; gap: 12px;
   padding: 14px 28px;
   border-top: 1px solid var(--border);
+  transition: background .1s;
+}
+.history-item.selected { background: #F5F7FF; }
+
+.history-chk-wrap {
+  flex-shrink: 0; display: flex; align-items: center;
+}
+.history-chk {
+  width: 15px; height: 15px; cursor: pointer; accent-color: var(--primary);
 }
 
 .history-main { flex: 1; min-width: 0; }
