@@ -1,0 +1,3 @@
+setup:
+  project: olftransfer
+  config: dev
