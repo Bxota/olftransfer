@@ -108,3 +108,14 @@ BEGIN
         ALTER TABLE files ADD COLUMN multipart_upload_id VARCHAR;
     END IF;
 END $$;
+
+-- Migration : nom optionnel du transfert
+DO $$
+BEGIN
+    IF NOT EXISTS (
+        SELECT 1 FROM information_schema.columns
+        WHERE table_name = 'transfers' AND column_name = 'name'
+    ) THEN
+        ALTER TABLE transfers ADD COLUMN name VARCHAR(100);
+    END IF;
+END $$;

@@ -89,6 +89,7 @@ class FileIn(BaseModel):
 
 class CreateTransferRequest(BaseModel):
     files: list[FileIn]
+    name: str | None = Field(default=None, max_length=100, description="Nom optionnel du transfert")
     expires_in_hours: int = Field(default=168, ge=1, description="Durée de validité en heures (défaut : 7 jours)")
     password: str | None = Field(default=None, description="Mot de passe optionnel pour protéger le transfert")
     max_downloads: int | None = Field(default=None, ge=1, description="Limite de téléchargements (None = illimité)")
@@ -123,6 +124,7 @@ class FileInfo(BaseModel):
 
 class TransferInfo(BaseModel):
     token: str
+    name: str | None = None
     expires_at: datetime
     download_count: int
     max_downloads: int | None
@@ -141,6 +143,7 @@ class DownloadResponse(BaseModel):
 
 class UserTransfer(BaseModel):
     token: str
+    name: str | None = None
     share_url: str
     created_at: datetime
     expires_at: datetime

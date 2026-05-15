@@ -9,6 +9,7 @@ interface TransferFile {
 
 interface TransferData {
   token: string
+  name: string | null
   expires_at: string
   download_count: number
   max_downloads: number | null
@@ -179,8 +180,13 @@ export default function TransferPage() {
             <>
               <div className="transfer-header">
                 <h1 className="transfer-title">
-                  {transfer.files.length} fichier{transfer.files.length > 1 ? 's' : ''}
+                  {transfer.name || `${transfer.files.length} fichier${transfer.files.length > 1 ? 's' : ''}`}
                 </h1>
+                {transfer.name && (
+                  <p style={{ margin: '2px 0 0', fontSize: 13, color: 'var(--subtext)' }}>
+                    {transfer.files.length} fichier{transfer.files.length > 1 ? 's' : ''}
+                  </p>
+                )}
                 <p className="transfer-meta">
                   <span>{transfer.files.map(f => formatSize(f.size_bytes)).join(', ')}</span>
                   <span>Expire le {formatDateLong(transfer.expires_at)}</span>

@@ -547,10 +547,10 @@ def create_transfer(body: CreateTransferRequest, request: Request, user: dict = 
 
         cur.execute(
             """
-            INSERT INTO transfers (user_id, token, expires_at, password_hash, max_downloads)
-            VALUES (%s, %s, %s, %s, %s) RETURNING id
+            INSERT INTO transfers (user_id, token, expires_at, password_hash, max_downloads, name)
+            VALUES (%s, %s, %s, %s, %s, %s) RETURNING id
             """,
-            (user["id"], token, expires_at, password_hash, body.max_downloads),
+            (user["id"], token, expires_at, password_hash, body.max_downloads, body.name),
         )
         transfer_id = cur.fetchone()[0]
 
@@ -657,7 +657,7 @@ def list_my_transfers(user: dict = Depends(get_current_user)):
         cur.execute(
             """
             SELECT id, token, created_at, expires_at, download_count, max_downloads,
-                   password_hash IS NOT NULL AS has_password
+                   password_hash IS NOT NULL AS has_password, name
             FROM transfers WHERE user_id = %s AND confirmed_at IS NOT NULL ORDER BY created_at DESC
             """,
             (user["id"],),
@@ -666,7 +666,7 @@ def list_my_transfers(user: dict = Depends(get_current_user)):
 
         result = []
         for t in transfers:
-            t_id, token, created_at, expires_at, dl_count, max_dl, has_pw = t
+            t_id, token, created_at, expires_at, dl_count, max_dl, has_pw, name = t
             cur.execute(
                 "SELECT filename, size_bytes, mime_type FROM files WHERE transfer_id = %s",
                 (t_id,),
@@ -675,6 +675,7 @@ def list_my_transfers(user: dict = Depends(get_current_user)):
             expires_aware = expires_at.replace(tzinfo=timezone.utc) if expires_at.tzinfo is None else expires_at
             result.append(UserTransfer(
                 token=token,
+                name=name,
                 share_url=f"{BASE_URL}/t/{token}",
                 created_at=created_at,
                 expires_at=expires_at,
@@ -831,14 +832,14 @@ def get_transfer(token: str):
     with get_conn() as conn:
         cur = conn.cursor()
         cur.execute(
-            "SELECT id, expires_at, download_count, max_downloads FROM transfers WHERE token = %s AND confirmed_at IS NOT NULL",
+            "SELECT id, expires_at, download_count, max_downloads, name FROM transfers WHERE token = %s AND confirmed_at IS NOT NULL",
             (token,),
         )
         row = cur.fetchone()
         if not row:
             raise HTTPException(status_code=404, detail="Transfer not found")
 
-        transfer_id, expires_at, download_count, max_downloads = row
+        transfer_id, expires_at, download_count, max_downloads, name = row
 
         if expires_at.replace(tzinfo=timezone.utc) < datetime.now(timezone.utc):
             raise HTTPException(status_code=410, detail="Transfer expired")
@@ -851,6 +852,7 @@ def get_transfer(token: str):
 
     return TransferInfo(
         token=token,
+        name=name,
         expires_at=expires_at,
         download_count=download_count,
         max_downloads=max_downloads,

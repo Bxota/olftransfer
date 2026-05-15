@@ -7,7 +7,7 @@ import { formatBytes, formatSize, formatDate, getExt, getStem, getFileCategory, 
 
 interface TransferFile { filename: string; size_bytes: number; mime_type: string }
 interface HistoryTransfer {
-  token: string; share_url: string; created_at: string; expires_at: string
+  token: string; name: string | null; share_url: string; created_at: string; expires_at: string
   is_expired: boolean; download_count: number; max_downloads: number | null
   has_password: boolean; files: TransferFile[]
 }
@@ -159,6 +159,7 @@ export default function HomePage() {
   const [sendError, setSendError] = useState('')
 
   // Options
+  const [transferName, setTransferName] = useState('')
   const [expiry, setExpiry] = useState('168')
   const [maxDownloads, setMaxDownloads] = useState('')
   const [transferPassword, setTransferPassword] = useState('')
@@ -251,6 +252,7 @@ export default function HomePage() {
     setThumbVersion(v => v + 1)
     setFiles([])
     setFileNames([])
+    setTransferName('')
     setStep('select')
     setSendError('')
     setProgress({})
@@ -365,6 +367,7 @@ export default function HomePage() {
             size_bytes: f.size,
             mime_type: f.type || null,
           })),
+          name: transferName.trim() || null,
           expires_in_hours: parseInt(expiry),
           max_downloads: maxDownloads ? parseInt(maxDownloads) : null,
           password: transferPassword || null,
@@ -602,6 +605,10 @@ export default function HomePage() {
                 <div className="card-body">
                   <p className="section-label">Options</p>
                   <div className="options-grid">
+                    <div className="field" style={{ gridColumn: '1 / -1' }}>
+                      <label htmlFor="transferName">Nom du transfert (optionnel)</label>
+                      <input id="transferName" type="text" placeholder="ex : Photos vacances 2026" maxLength={100} value={transferName} onChange={e => setTransferName(e.target.value)} />
+                    </div>
                     <div className="field">
                       <label htmlFor="expiry">Expiration</label>
                       <select id="expiry" value={expiry} onChange={e => setExpiry(e.target.value)}>
@@ -735,6 +742,7 @@ export default function HomePage() {
                 </div>
               ) : history.map(t => {
                 const filenames = t.files.map(f => f.filename).join(', ')
+                const displayName = t.name || filenames
                 const totalSize = t.files.reduce((s, f) => s + f.size_bytes, 0)
                 const limitReached = !!(t.max_downloads && t.download_count >= t.max_downloads)
                 const canCopy = !t.is_expired && !limitReached
@@ -746,7 +754,8 @@ export default function HomePage() {
                       <input type="checkbox" className="history-chk" checked={checked} onChange={e => toggleToken(t.token, e.target.checked)} />
                     </label>
                     <div className="history-main">
-                      <div className="history-files">{filenames}</div>
+                      <div className="history-files">{displayName}</div>
+                      {t.name && <div className="history-files" style={{ fontSize: 11, color: 'var(--subtext)', marginTop: 1 }}>{filenames}</div>}
                       <div className="history-meta">
                         <span>{formatSize(totalSize)}</span>
                         <span>Créé le {formatDate(new Date(t.created_at))}</span>
