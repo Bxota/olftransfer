@@ -55,13 +55,11 @@ from .models import (
     UserListItem,
     UserTransfer,
 )
-from .scanner import scan_bytes
 from .storage import (
     abort_multipart_upload,
     complete_multipart_upload,
     create_multipart_upload,
     delete_objects,
-    download_object,
     get_bucket_stats,
     get_client,
     get_log_content,
@@ -596,7 +594,7 @@ def create_transfer(body: CreateTransferRequest, request: Request, user: dict = 
     )
 
 
-@app.post("/transfers/{token}/confirm", tags=["Transfers"], summary="Confirmer un transfert (déclenche l'antivirus)")
+@app.post("/transfers/{token}/confirm", tags=["Transfers"], summary="Confirmer un transfert")
 def confirm_transfer(token: str, body: ConfirmTransferRequest, user: dict = Depends(get_current_user)):
     with get_conn() as conn:
         cur = conn.cursor()
@@ -607,41 +605,7 @@ def confirm_transfer(token: str, body: ConfirmTransferRequest, user: dict = Depe
         row = cur.fetchone()
         if not row:
             raise HTTPException(status_code=404, detail="Transfer not found or already confirmed")
-        transfer_id = row[0]
 
-        cur.execute("SELECT r2_key, filename FROM files WHERE transfer_id = %s", (transfer_id,))
-        files = cur.fetchall()
-
-    for r2_key, filename in files:
-        try:
-            data = download_object(r2_key)
-            virus = scan_bytes(data)
-        except Exception as e:
-            write_log_event("scan_error", token, {"user_email": user["email"], "filename": filename, "error": str(e)})
-            continue
-
-        if virus:
-            if not user["is_trusted"]:
-                r2_keys = [f[0] for f in files]
-                delete_objects(r2_keys)
-                with get_conn() as conn:
-                    cur = conn.cursor()
-                    cur.execute("DELETE FROM transfers WHERE id = %s", (transfer_id,))
-                write_log_event("scan_blocked", token, {"user_email": user["email"], "filename": filename, "virus": virus})
-                raise HTTPException(status_code=400, detail=f"Fichier refusé : détection antivirus ({virus})")
-
-            if not body.acknowledge_risk:
-                write_log_event("scan_warning", token, {"user_email": user["email"], "filename": filename, "virus": virus})
-                from fastapi.responses import JSONResponse
-                return JSONResponse(
-                    status_code=202,
-                    content={"requires_acknowledgment": True, "virus": virus, "filename": filename},
-                )
-
-            write_log_event("scan_acknowledged", token, {"user_email": user["email"], "filename": filename, "virus": virus})
-
-    with get_conn() as conn:
-        cur = conn.cursor()
         cur.execute(
             "UPDATE transfers SET confirmed_at = NOW() WHERE token = %s AND user_id = %s AND confirmed_at IS NULL",
             (token, user["id"]),
