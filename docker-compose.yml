@@ -2,7 +2,7 @@ services:
   app:
     image: ghcr.io/${GITHUB_REPOSITORY:-bxota/olftransfer}:${IMAGE_TAG:-latest}
     build:
-      context: ..
+      context: .
       dockerfile: app/Dockerfile
     container_name: olftransfer-app
     restart: unless-stopped

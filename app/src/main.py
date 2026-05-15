@@ -7,7 +7,7 @@ import zipfile
 from contextlib import asynccontextmanager
 from datetime import datetime, timedelta, timezone
 
-from fastapi import Cookie, Depends, FastAPI, HTTPException, Query, Request, Response
+from fastapi import Depends, FastAPI, HTTPException, Query, Request, Response
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
@@ -129,12 +129,18 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-app.mount("/static", StaticFiles(directory=STATIC_DIR), name="static")
-
-
-# ── Pages HTML ────────────────────────────────────────────────────────────────
+_assets_dir = os.path.join(STATIC_DIR, "assets")
+if os.path.isdir(_assets_dir):
+    app.mount("/assets", StaticFiles(directory=_assets_dir), name="assets")
 
 NO_STORE = {"Cache-Control": "no-store"}
+
+
+def _spa_response():
+    index_file = os.path.join(STATIC_DIR, "index.html")
+    if os.path.isfile(index_file):
+        return FileResponse(index_file, headers=NO_STORE)
+    raise HTTPException(status_code=503, detail="Frontend not built")
 
 
 def _download_file_rows(token: str, password: str | None):
@@ -229,35 +235,6 @@ def _cleanup_file(path: str) -> None:
         os.remove(path)
     except OSError:
         pass
-
-
-@app.get("/", include_in_schema=False)
-def index_page(session: str | None = Cookie(default=None)):
-    if not get_session_user_id(session):
-        return FileResponse(os.path.join(STATIC_DIR, "login.html"), headers=NO_STORE)
-    return FileResponse(os.path.join(STATIC_DIR, "index.html"), headers=NO_STORE)
-
-
-@app.get("/login", include_in_schema=False)
-def login_page():
-    return FileResponse(os.path.join(STATIC_DIR, "login.html"), headers=NO_STORE)
-
-
-@app.get("/register", include_in_schema=False)
-def register_page():
-    return FileResponse(os.path.join(STATIC_DIR, "register.html"))
-
-
-@app.get("/admin", include_in_schema=False)
-def admin_page(session: str | None = Cookie(default=None)):
-    if not get_session_user_id(session):
-        return FileResponse(os.path.join(STATIC_DIR, "login.html"), headers=NO_STORE)
-    return FileResponse(os.path.join(STATIC_DIR, "admin.html"), headers=NO_STORE)
-
-
-@app.get("/t/{token}", include_in_schema=False)
-def transfer_page(token: str):
-    return FileResponse(os.path.join(STATIC_DIR, "transfer.html"))
 
 
 # ── Auth ──────────────────────────────────────────────────────────────────────
@@ -970,3 +947,11 @@ def abort_upload(file_id: str, body: AbortUploadRequest, user: dict = Depends(ge
     if not row:
         raise HTTPException(status_code=404)
     abort_multipart_upload(row[0], body.upload_id)
+
+
+# ── SPA fallback (must be last) ───────────────────────────────────────────────
+
+@app.get("/", include_in_schema=False)
+@app.get("/{path:path}", include_in_schema=False)
+def spa_fallback(path: str = ""):  # noqa: ARG001
+    return _spa_response()
