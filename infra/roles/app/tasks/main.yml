@@ -8,7 +8,7 @@
 
 - name: Copy docker-compose.yml
   copy:
-    src: "{{ playbook_dir }}/../app/docker-compose.yml"
+    src: "{{ playbook_dir }}/../docker-compose.yml"
     dest: "{{ app_dir }}/docker-compose.yml"
     mode: "0644"
 
