@@ -1,6 +1,16 @@
 import { ChangeEvent, DragEvent, useEffect, useRef, useState } from 'react'
 import { Link, useNavigate } from 'react-router-dom'
 import { useAuth } from '../App'
+import UploadIcon from '../icons/upload-icon'
+import CameraIcon from '../icons/camera-icon'
+import BrandZoomIcon from '../icons/brand-zoom-icon'
+import FileDescriptionIcon from '../icons/file-description-icon'
+import CodeIcon from '../icons/code-icon'
+import DownloadIcon from '../icons/download-icon'
+import SendIcon from '../icons/send-icon'
+import TrashIcon from '../icons/trash-icon'
+import RefreshIcon from '../icons/refresh-icon'
+import type { AnimatedIconHandle } from '../icons/types'
 import { formatBytes, formatSize, formatDate, getExt, getStem, getFileCategory, FileCategory } from '../lib/utils'
 
 // ── Types ────────────────────────────────────────────────────────────────────
@@ -151,6 +161,8 @@ export default function HomePage() {
   const [fileNames, setFileNames] = useState<string[]>([])
   const thumbUrlsRef = useRef<Record<number, string>>({})
   const [thumbVersion, setThumbVersion] = useState(0) // trigger re-render
+  const uploadIconRef = useRef<AnimatedIconHandle>(null)
+  const sendIconRef = useRef<AnimatedIconHandle>(null)
 
   // Steps
   const [step, setStep] = useState<'select' | 'uploading' | 'done'>('select')
@@ -467,11 +479,7 @@ export default function HomePage() {
       <header className="header">
         <Link to="/" className="logo">
           <div className="logo-icon">
-            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5">
-              <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" />
-              <polyline points="17 8 12 3 7 8" />
-              <line x1="12" y1="3" x2="12" y2="15" />
-            </svg>
+            <UploadIcon size={18} strokeWidth={2.5} />
           </div>
           <span className="logo-name">OlfTransfer</span>
         </Link>
@@ -533,15 +541,13 @@ export default function HomePage() {
                   onDragLeave={() => setDragOver(false)}
                   onDrop={e => { e.preventDefault(); setDragOver(false); addFiles([...e.dataTransfer.files]) }}
                   onClick={() => document.getElementById('fileInput')?.click()}
+                  onMouseEnter={() => uploadIconRef.current?.startAnimation()}
+                  onMouseLeave={() => uploadIconRef.current?.stopAnimation()}
                 >
                   <input id="fileInput" type="file" multiple style={{ display: 'none' }}
                     onChange={(e: ChangeEvent<HTMLInputElement>) => { if (e.target.files) { addFiles([...e.target.files]); e.target.value = '' } }} />
                   <div className="dropzone-icon">
-                    <svg width="40" height="40" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5">
-                      <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" />
-                      <polyline points="17 8 12 3 7 8" />
-                      <line x1="12" y1="3" x2="12" y2="15" />
-                    </svg>
+                    <UploadIcon ref={uploadIconRef} size={40} strokeWidth={1.5} disableHover />
                   </div>
                   <h2>Déposer vos fichiers ici</h2>
                   <p>ou <span className="browse">parcourir</span> depuis votre appareil</p>
@@ -567,10 +573,10 @@ export default function HomePage() {
                               style={previewable ? { cursor: 'pointer' } : {}}
                               onClick={previewable ? () => setPreviewFile(f) : undefined}
                             >
-                              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-                                <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" />
-                                <polyline points="14 2 14 8 20 8" />
-                              </svg>
+                              {cat === 'image' ? <CameraIcon size={16} strokeWidth={2} /> :
+                               cat === 'video' ? <BrandZoomIcon size={16} strokeWidth={2} /> :
+                               cat === 'code' ? <CodeIcon size={16} strokeWidth={2} /> :
+                               <FileDescriptionIcon size={16} strokeWidth={2} />}
                             </div>
                           )}
                           <div className="file-info">
@@ -634,10 +640,13 @@ export default function HomePage() {
               {hasFiles && (
                 <div className="card-body">
                   {sendError && <div className="alert alert-error mt-0 mb-3" style={{ marginBottom: 12 }}>{sendError}</div>}
-                  <button className="btn btn-primary btn-full" onClick={send}>
-                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5">
-                      <line x1="22" y1="2" x2="11" y2="13" /><polygon points="22 2 15 22 11 13 2 9 22 2" />
-                    </svg>
+                  <button
+                    className="btn btn-primary btn-full"
+                    onClick={send}
+                    onMouseEnter={() => sendIconRef.current?.startAnimation()}
+                    onMouseLeave={() => sendIconRef.current?.stopAnimation()}
+                  >
+                    <SendIcon ref={sendIconRef} size={16} strokeWidth={2.5} color="currentColor" disableHover />
                     Envoyer
                   </button>
                 </div>
@@ -653,13 +662,13 @@ export default function HomePage() {
                 <ul className="file-list">
                   {files.map((f, i) => {
                     const prog = progress[i] ?? { pct: 0, done: false }
+                    const cat = getFileCategory(f)
                     return (
                       <li key={i} className="file-item">
                         <div className="file-type-icon">
-                          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-                            <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" />
-                            <polyline points="14 2 14 8 20 8" />
-                          </svg>
+                          {cat === 'video' ? <BrandZoomIcon size={16} strokeWidth={2} /> :
+                           cat === 'code' ? <CodeIcon size={16} strokeWidth={2} /> :
+                           <FileDescriptionIcon size={16} strokeWidth={2} />}
                         </div>
                         <div className="file-info">
                           <div className="file-name">{getEffectiveName(i)}</div>
@@ -706,10 +715,7 @@ export default function HomePage() {
                   <QuotaBar used={user.storage_used_bytes} quota={user.storage_quota_bytes} />
                 )}
               <button className="btn btn-ghost btn-sm" title="Actualiser" onClick={loadHistory}>
-                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5">
-                  <polyline points="23 4 23 10 17 10" /><polyline points="1 20 1 14 7 14" />
-                  <path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15" />
-                </svg>
+                <RefreshIcon size={14} strokeWidth={2.5} />
               </button>
               </div>
             </div>
@@ -726,10 +732,7 @@ export default function HomePage() {
                   <span>{selectedTokens.size} sélectionné{selectedTokens.size > 1 ? 's' : ''}</span>
                 </label>
                 <button className="bulk-delete-btn" onClick={bulkDelete}>
-                  <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-                    <polyline points="3 6 5 6 21 6" /><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6" />
-                    <path d="M10 11v6" /><path d="M14 11v6" /><path d="M9 6V4h6v2" />
-                  </svg>
+                  <TrashIcon size={13} strokeWidth={2} dangerHover />
                   Supprimer
                 </button>
               </div>
@@ -768,17 +771,12 @@ export default function HomePage() {
                         {t.is_expired ? 'Expiré' : limitReached ? 'Limite atteinte' : 'Actif'}
                       </span>
                       <span className="history-dl">
-                        <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5">
-                          <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" /><polyline points="7 10 12 15 17 10" /><line x1="12" y1="15" x2="12" y2="3" />
-                        </svg>
+                        <DownloadIcon size={12} strokeWidth={2.5} />
                         {t.max_downloads ? `${t.download_count} / ${t.max_downloads}` : t.download_count}
                       </span>
                       {canCopy && <CopyBtn url={t.share_url} />}
                       <button className="history-delete" title="Supprimer" onClick={() => deleteTransfer(t.token)}>
-                        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-                          <polyline points="3 6 5 6 21 6" /><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6" />
-                          <path d="M10 11v6" /><path d="M14 11v6" /><path d="M9 6V4h6v2" />
-                        </svg>
+                        <TrashIcon size={14} strokeWidth={2} dangerHover />
                       </button>
                     </div>
                   </div>

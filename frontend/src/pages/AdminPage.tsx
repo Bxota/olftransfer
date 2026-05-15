@@ -2,6 +2,8 @@ import { FormEvent, useEffect, useState } from 'react'
 import { Link, useNavigate } from 'react-router-dom'
 import { useAuth } from '../App'
 import { formatBytes } from '../lib/utils'
+import UserIcon from '../icons/user-icon'
+import UserCheckIcon from '../icons/user-check-icon'
 
 interface UserItem {
   id: string
@@ -209,10 +211,10 @@ export default function AdminPage() {
                   {users.map(u => (
                     <li key={u.id} className="file-item" style={{ gap: 8 }}>
                       <div className="file-type-icon">
-                        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-                          <path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2" />
-                          <circle cx="12" cy="7" r="4" />
-                        </svg>
+                        {u.is_trusted
+                          ? <UserCheckIcon size={16} strokeWidth={2} color={`var(--success)`} />
+                          : <UserIcon size={16} strokeWidth={2} />
+                        }
                       </div>
                       <div className="file-info">
                         <div className="file-name">{u.email}</div>

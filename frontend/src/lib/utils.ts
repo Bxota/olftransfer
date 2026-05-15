@@ -30,7 +30,7 @@ export function getStem(name: string): string {
   return i > 0 ? name.slice(0, i) : name
 }
 
-export type FileCategory = 'image' | 'video' | 'audio' | 'pdf' | 'text' | 'other'
+export type FileCategory = 'image' | 'video' | 'audio' | 'pdf' | 'text' | 'code' | 'other'
 
 export function getFileCategory(file: File): FileCategory {
   const t = file.type
@@ -38,10 +38,9 @@ export function getFileCategory(file: File): FileCategory {
   if (t.startsWith('video/')) return 'video'
   if (t.startsWith('audio/')) return 'audio'
   if (t === 'application/pdf') return 'pdf'
-  if (
-    t.startsWith('text/') ||
-    /\.(txt|md|json|csv|xml|yaml|yml|log|js|ts|py|html|css|sh)$/i.test(file.name)
-  )
+  if (/\.(js|jsx|ts|tsx|py|sh|bash|zsh|rb|go|rs|java|c|cpp|h|hpp|cs|php|swift|kt|scala|lua|r|sql|html|css|scss|sass|less|json|xml|yaml|yml|toml|dockerfile)$/i.test(file.name))
+    return 'code'
+  if (t.startsWith('text/') || /\.(txt|md|csv|log)$/i.test(file.name))
     return 'text'
   return 'other'
 }
