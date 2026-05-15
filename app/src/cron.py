@@ -63,6 +63,20 @@ def _do_cleanup():
         # - sans fichiers multipart : après 2h (upload petit fichier échoué)
         # - avec fichiers multipart : après 48h (fenêtre de reprise)
         cur.execute("""
+            SELECT f.r2_key
+            FROM files f
+            JOIN transfers t ON f.transfer_id = t.id
+            WHERE t.confirmed_at IS NULL AND t.created_at < NOW() - INTERVAL '2 hours'
+            AND NOT EXISTS (
+                SELECT 1 FROM files f2
+                WHERE f2.transfer_id = t.id AND f2.multipart_upload_id IS NOT NULL
+            )
+        """)
+        small_keys = [row[0] for row in cur.fetchall()]
+        if small_keys:
+            delete_objects(small_keys)
+
+        cur.execute("""
             DELETE FROM transfers
             WHERE confirmed_at IS NULL AND created_at < NOW() - INTERVAL '2 hours'
             AND NOT EXISTS (
@@ -71,6 +85,16 @@ def _do_cleanup():
             )
         """)
         abandoned_small = cur.rowcount
+
+        cur.execute("""
+            SELECT f.r2_key
+            FROM files f
+            JOIN transfers t ON f.transfer_id = t.id
+            WHERE t.confirmed_at IS NULL AND t.created_at < NOW() - INTERVAL '48 hours'
+        """)
+        large_keys = [row[0] for row in cur.fetchall()]
+        if large_keys:
+            delete_objects(large_keys)
 
         cur.execute("""
             DELETE FROM transfers
