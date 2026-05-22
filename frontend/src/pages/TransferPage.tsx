@@ -13,6 +13,7 @@ interface TransferData {
   expires_at: string
   download_count: number
   max_downloads: number | null
+  has_password: boolean
   files: TransferFile[]
 }
 
@@ -41,8 +42,9 @@ export default function TransferPage() {
         return
       }
       if (!res.ok) throw new Error()
-      setTransfer(await res.json())
-      setState('ready')
+      const data = await res.json()
+      setTransfer(data)
+      setState(data.has_password ? 'password' : 'ready')
     } catch {
       setErrorTitle('Erreur')
       setErrorMsg('Impossible de charger ce transfert.')
@@ -103,13 +105,22 @@ export default function TransferPage() {
   }
 
   async function handleUnlock() {
-    passwordRef.current = passwordInput
     setPwError('')
-    const res = await fetch(`/transfers/${token}`)
-    if (res.ok) {
-      setTransfer(await res.json())
-      setState('ready')
+    const res = await fetch(`/transfers/${token}?password=${encodeURIComponent(passwordInput)}`)
+    if (res.status === 403) {
+      setPwError('Mot de passe incorrect.')
+      return
     }
+    if (!res.ok) {
+      const data = await res.json()
+      setErrorTitle('Erreur')
+      setErrorMsg(data.detail)
+      setState('error')
+      return
+    }
+    passwordRef.current = passwordInput
+    setTransfer(await res.json())
+    setState('ready')
   }
 
   return (

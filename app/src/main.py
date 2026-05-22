@@ -792,27 +792,38 @@ def resume_transfer(token: str, user: dict = Depends(get_current_user)):
 
 
 @app.get("/transfers/{token}", tags=["Transfers"], summary="Informations d'un transfert public", response_model=TransferInfo)
-def get_transfer(token: str):
+def get_transfer(token: str, password: str | None = Query(default=None)):
     with get_conn() as conn:
         cur = conn.cursor()
         cur.execute(
-            "SELECT id, expires_at, download_count, max_downloads, name FROM transfers WHERE token = %s AND confirmed_at IS NOT NULL",
+            "SELECT id, expires_at, download_count, max_downloads, name, password_hash FROM transfers WHERE token = %s AND confirmed_at IS NOT NULL",
             (token,),
         )
         row = cur.fetchone()
         if not row:
             raise HTTPException(status_code=404, detail="Transfer not found")
 
-        transfer_id, expires_at, download_count, max_downloads, name = row
+        transfer_id, expires_at, download_count, max_downloads, name, password_hash = row
+        has_password = bool(password_hash)
 
         if expires_at.replace(tzinfo=timezone.utc) < datetime.now(timezone.utc):
             raise HTTPException(status_code=410, detail="Transfer expired")
 
-        cur.execute(
-            "SELECT filename, size_bytes, mime_type FROM files WHERE transfer_id = %s",
-            (transfer_id,),
-        )
-        files = [FileInfo(filename=r[0], size_bytes=r[1], mime_type=r[2]) for r in cur.fetchall()]
+        password_unlocked = False
+        if has_password and password:
+            if hashlib.sha256(password.encode()).hexdigest() == password_hash:
+                password_unlocked = True
+            else:
+                raise HTTPException(status_code=403, detail="Wrong password")
+
+        if not has_password or password_unlocked:
+            cur.execute(
+                "SELECT filename, size_bytes, mime_type FROM files WHERE transfer_id = %s",
+                (transfer_id,),
+            )
+            files = [FileInfo(filename=r[0], size_bytes=r[1], mime_type=r[2]) for r in cur.fetchall()]
+        else:
+            files = []
 
     return TransferInfo(
         token=token,
@@ -820,8 +831,10 @@ def get_transfer(token: str):
         expires_at=expires_at,
         download_count=download_count,
         max_downloads=max_downloads,
+        has_password=has_password,
         files=files,
     )
+
 
 
 @app.get("/transfers/{token}/download", tags=["Transfers"], summary="Obtenir les URLs de téléchargement", response_model=DownloadResponse)

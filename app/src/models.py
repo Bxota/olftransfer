@@ -128,6 +128,7 @@ class TransferInfo(BaseModel):
     expires_at: datetime
     download_count: int
     max_downloads: int | None
+    has_password: bool
     files: list[FileInfo]
 
 
