@@ -16,6 +16,7 @@ from starlette.background import BackgroundTask
 from .auth import (
     create_session,
     get_current_user,
+    get_optional_user,
     get_session_user_id,
     hash_password,
     require_admin,
@@ -838,12 +839,13 @@ def get_transfer(token: str, password: str | None = Query(default=None)):
 
 
 @app.get("/transfers/{token}/download", tags=["Transfers"], summary="Obtenir les URLs de téléchargement", response_model=DownloadResponse)
-def download_transfer(token: str, request: Request, password: str | None = Query(default=None, description="Mot de passe si le transfert est protégé")):
+def download_transfer(token: str, request: Request, password: str | None = Query(default=None, description="Mot de passe si le transfert est protégé"), downloader: dict | None = Depends(get_optional_user)):
     rows, sender_email, transfer_name = _download_file_rows(token, password)
 
     file_count = len(rows)
     total_bytes = sum(r[1] for r in rows)
     filenames = [r[0] for r in rows]
+    downloader_email = downloader["email"] if downloader else None
     write_log_event("download", token, {
         "ip": request.headers.get("x-forwarded-for", request.client.host if request.client else None),
         "user_agent": request.headers.get("user-agent"),
@@ -851,7 +853,7 @@ def download_transfer(token: str, request: Request, password: str | None = Query
         "total_bytes": total_bytes,
     })
 
-    background = BackgroundTask(send_download_notification, sender_email, token, transfer_name, filenames, total_bytes)
+    background = BackgroundTask(send_download_notification, sender_email, token, transfer_name, filenames, total_bytes, downloader_email)
     return Response(
         content=DownloadResponse(files=[
             DownloadUrl(filename=r[0], size_bytes=r[1], download_url=presigned_download_url(r[2], r[0]))
@@ -863,7 +865,7 @@ def download_transfer(token: str, request: Request, password: str | None = Query
 
 
 @app.get("/transfers/{token}/download-zip", tags=["Transfers"], summary="Télécharger tous les fichiers en ZIP")
-def download_transfer_zip(token: str, password: str | None = Query(default=None, description="Mot de passe si le transfert est protégé")):
+def download_transfer_zip(token: str, password: str | None = Query(default=None, description="Mot de passe si le transfert est protégé"), downloader: dict | None = Depends(get_optional_user)):
     rows, sender_email, transfer_name = _download_file_rows(token, password)
 
     if len(rows) <= 1:
@@ -872,11 +874,12 @@ def download_transfer_zip(token: str, password: str | None = Query(default=None,
     file_count = len(rows)
     total_bytes = sum(r[1] for r in rows)
     filenames = [r[0] for r in rows]
+    downloader_email = downloader["email"] if downloader else None
     zip_path = _build_transfer_zip(rows)
 
     def _cleanup_and_notify(path: str):
         _cleanup_file(path)
-        send_download_notification(sender_email, token, transfer_name, filenames, total_bytes)
+        send_download_notification(sender_email, token, transfer_name, filenames, total_bytes, downloader_email)
 
     return FileResponse(
         zip_path,

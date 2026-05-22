@@ -46,6 +46,19 @@ def get_current_user(session: str | None = Cookie(default=None)) -> dict:
     return {"id": str(row[0]), "email": row[1], "is_admin": row[2], "is_trusted": row[3], "storage_quota_bytes": row[4]}
 
 
+def get_optional_user(session: str | None = Cookie(default=None)) -> dict | None:
+    user_id = get_session_user_id(session)
+    if not user_id:
+        return None
+    with get_conn() as conn:
+        cur = conn.cursor()
+        cur.execute("SELECT id, email, is_admin, is_trusted, storage_quota_bytes FROM users WHERE id = %s", (user_id,))
+        row = cur.fetchone()
+    if not row:
+        return None
+    return {"id": str(row[0]), "email": row[1], "is_admin": row[2], "is_trusted": row[3], "storage_quota_bytes": row[4]}
+
+
 def require_admin(user: dict = Depends(get_current_user)) -> dict:
     if not user["is_admin"]:
         raise HTTPException(status_code=403, detail="Admin required")
