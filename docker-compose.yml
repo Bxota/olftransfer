@@ -22,8 +22,6 @@ services:
       SMTP_USER: ${SMTP_USER}
       SMTP_PASSWORD: ${SMTP_PASSWORD}
       SMTP_FROM: ${SMTP_FROM}
-      CLAMAV_HOST: clamav
-      CLAMAV_PORT: 3310
     networks:
       caddy_net:
         aliases:
@@ -31,17 +29,6 @@ services:
       internal:
     depends_on:
       - postgres
-      - clamav
-
-  clamav:
-    image: clamav/clamav:latest
-    platform: linux/amd64
-    container_name: olftransfer-clamav
-    restart: unless-stopped
-    volumes:
-      - clamav_data:/var/lib/clamav
-    networks:
-      - internal
 
   postgres:
     image: postgres:16-alpine
@@ -58,7 +45,6 @@ services:
 
 volumes:
   pgdata:
-  clamav_data:
 
 networks:
   caddy_net:
