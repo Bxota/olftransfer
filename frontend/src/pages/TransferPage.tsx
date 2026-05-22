@@ -91,13 +91,13 @@ export default function TransferPage() {
   }
 
   async function downloadAll() {
-    const files = await getDownloadUrls()
-    if (!files) return
-    if (files.length > 1) {
+    if (transfer && transfer.files.length > 1) {
       const params = passwordRef.current ? `?password=${encodeURIComponent(passwordRef.current)}` : ''
       triggerDownload(`/transfers/${token}/download-zip${params}`, `${token}.zip`)
       return
     }
+    const files = await getDownloadUrls()
+    if (!files) return
     for (const f of files) {
       triggerDownload(f.download_url, f.filename)
       await new Promise(r => setTimeout(r, 200))

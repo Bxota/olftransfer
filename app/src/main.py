@@ -146,7 +146,7 @@ def _download_file_rows(token: str, password: str | None):
         cur = conn.cursor()
         cur.execute(
             """
-            SELECT t.id, t.expires_at, t.password_hash, t.download_count, t.max_downloads, u.email
+            SELECT t.id, t.expires_at, t.password_hash, t.download_count, t.max_downloads, u.email, t.name
             FROM transfers t
             JOIN users u ON u.id = t.user_id
             WHERE t.token = %s AND t.confirmed_at IS NOT NULL
@@ -157,7 +157,7 @@ def _download_file_rows(token: str, password: str | None):
         if not row:
             raise HTTPException(status_code=404, detail="Transfer not found")
 
-        transfer_id, expires_at, password_hash, download_count, max_downloads, sender_email = row
+        transfer_id, expires_at, password_hash, download_count, max_downloads, sender_email, transfer_name = row
 
         if expires_at.replace(tzinfo=timezone.utc) < datetime.now(timezone.utc):
             raise HTTPException(status_code=410, detail="Transfer expired")
@@ -182,7 +182,7 @@ def _download_file_rows(token: str, password: str | None):
             (transfer_id,),
         )
 
-    return rows, sender_email
+    return rows, sender_email, transfer_name
 
 
 def _zip_entry_name(filename: str, used_names: set[str]) -> str:
@@ -839,10 +839,11 @@ def get_transfer(token: str, password: str | None = Query(default=None)):
 
 @app.get("/transfers/{token}/download", tags=["Transfers"], summary="Obtenir les URLs de téléchargement", response_model=DownloadResponse)
 def download_transfer(token: str, request: Request, password: str | None = Query(default=None, description="Mot de passe si le transfert est protégé")):
-    rows, sender_email = _download_file_rows(token, password)
+    rows, sender_email, transfer_name = _download_file_rows(token, password)
 
     file_count = len(rows)
     total_bytes = sum(r[1] for r in rows)
+    filenames = [r[0] for r in rows]
     write_log_event("download", token, {
         "ip": request.headers.get("x-forwarded-for", request.client.host if request.client else None),
         "user_agent": request.headers.get("user-agent"),
@@ -850,7 +851,7 @@ def download_transfer(token: str, request: Request, password: str | None = Query
         "total_bytes": total_bytes,
     })
 
-    background = BackgroundTask(send_download_notification, sender_email, token, file_count, total_bytes)
+    background = BackgroundTask(send_download_notification, sender_email, token, transfer_name, filenames, total_bytes)
     return Response(
         content=DownloadResponse(files=[
             DownloadUrl(filename=r[0], size_bytes=r[1], download_url=presigned_download_url(r[2], r[0]))
@@ -863,18 +864,19 @@ def download_transfer(token: str, request: Request, password: str | None = Query
 
 @app.get("/transfers/{token}/download-zip", tags=["Transfers"], summary="Télécharger tous les fichiers en ZIP")
 def download_transfer_zip(token: str, password: str | None = Query(default=None, description="Mot de passe si le transfert est protégé")):
-    rows, sender_email = _download_file_rows(token, password)
+    rows, sender_email, transfer_name = _download_file_rows(token, password)
 
     if len(rows) <= 1:
         raise HTTPException(status_code=400, detail="Zip download requires at least 2 files")
 
     file_count = len(rows)
     total_bytes = sum(r[1] for r in rows)
+    filenames = [r[0] for r in rows]
     zip_path = _build_transfer_zip(rows)
 
     def _cleanup_and_notify(path: str):
         _cleanup_file(path)
-        send_download_notification(sender_email, token, file_count, total_bytes)
+        send_download_notification(sender_email, token, transfer_name, filenames, total_bytes)
 
     return FileResponse(
         zip_path,
