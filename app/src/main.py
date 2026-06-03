@@ -884,7 +884,7 @@ def download_transfer_zip(token: str, password: str | None = Query(default=None,
     return FileResponse(
         zip_path,
         media_type="application/zip",
-        filename=f"{token}.zip",
+        filename=f"{transfer_name}.zip" if transfer_name else f"{token}.zip",
         background=BackgroundTask(_cleanup_and_notify, zip_path),
     )
 
