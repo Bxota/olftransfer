@@ -12,6 +12,10 @@
     dest: "{{ app_dir }}/docker-compose.yml"
     mode: "0644"
 
+- name: Login to GHCR
+  shell: echo "{{ ghcr_token }}" | docker login ghcr.io -u "{{ ghcr_user }}" --password-stdin
+  no_log: true
+
 - name: Start containers
   shell: >
     doppler run

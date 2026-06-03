@@ -50,9 +50,13 @@ jobs:
         env:
           DOPPLER_TOKEN: ${{ secrets.DOPPLER_TOKEN }}
           IMAGE_TAG: ${{ github.sha }}
+          GHCR_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GHCR_USER: ${{ github.actor }}
         run: |
           ansible-playbook infra/playbook.yml \
             -i infra/inventory.yml \
             --private-key ~/.ssh/id_ed25519 \
             -e "doppler_token=${DOPPLER_TOKEN}" \
-            -e "image_tag=${IMAGE_TAG}"
+            -e "image_tag=${IMAGE_TAG}" \
+            -e "ghcr_token=${GHCR_TOKEN}" \
+            -e "ghcr_user=${GHCR_USER}"
