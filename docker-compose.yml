@@ -22,6 +22,7 @@ services:
       SMTP_USER: ${SMTP_USER}
       SMTP_PASSWORD: ${SMTP_PASSWORD}
       SMTP_FROM: ${SMTP_FROM}
+      LIVESLIDE_API_KEY: ${LIVESLIDE_API_KEY}
     networks:
       caddy_net:
         aliases:
