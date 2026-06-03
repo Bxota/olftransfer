@@ -1,7 +1,7 @@
 import os
 import bcrypt
 from itsdangerous import BadSignature, SignatureExpired, URLSafeTimedSerializer
-from fastapi import Cookie, Depends, HTTPException
+from fastapi import Cookie, Depends, Header, HTTPException
 
 from .db import get_conn
 
@@ -33,7 +33,21 @@ def verify_password(password: str, hashed: str) -> bool:
     return bcrypt.checkpw(password.encode(), hashed.encode())
 
 
-def get_current_user(session: str | None = Cookie(default=None)) -> dict:
+def get_current_user(
+    session: str | None = Cookie(default=None),
+    x_api_key: str | None = Header(default=None, alias="X-Api-Key"),
+) -> dict:
+    # API key auth (for service accounts like liveslide)
+    expected_key = os.environ.get("LIVESLIDE_API_KEY")
+    if x_api_key and expected_key and x_api_key == expected_key:
+        with get_conn() as conn:
+            cur = conn.cursor()
+            cur.execute("SELECT id, email, is_admin, is_trusted, storage_quota_bytes FROM users WHERE is_admin = TRUE LIMIT 1")
+            row = cur.fetchone()
+        if row:
+            return {"id": str(row[0]), "email": row[1], "is_admin": row[2], "is_trusted": row[3], "storage_quota_bytes": row[4]}
+
+    # Session cookie auth
     user_id = get_session_user_id(session)
     if not user_id:
         raise HTTPException(status_code=401, detail="Not authenticated")
