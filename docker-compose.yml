@@ -1,9 +1,6 @@
 services:
   app:
     image: ghcr.io/bxota/olftransfer:latest
-    build:
-      context: .
-      dockerfile: app/Dockerfile
     container_name: olftransfer-app
     restart: unless-stopped
     environment:
