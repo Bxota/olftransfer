@@ -32,7 +32,7 @@ def _do_cleanup():
 
         # Transfers expirés non encore archivés → déplacer en COLD_ARCHIVE
         cur.execute("""
-            SELECT t.id, t.token, f.r2_key
+            SELECT t.id, t.token, f.storage_key
             FROM files f
             JOIN transfers t ON f.transfer_id = t.id
             WHERE t.expires_at < NOW()
@@ -42,14 +42,14 @@ def _do_cleanup():
         """)
         rows = cur.fetchall()
         transfer_ids = list({row[0] for row in rows})
-        r2_keys = [row[2] for row in rows]
+        storage_keys = [row[2] for row in rows]
         expired_tokens = list({row[1] for row in rows})
 
-        logger.info(f"Cleanup: archiving {len(r2_keys)} S3 object(s) to cold storage")
+        logger.info(f"Cleanup: archiving {len(storage_keys)} S3 object(s) to cold storage")
 
-        if r2_keys:
+        if storage_keys:
             try:
-                archive_objects(r2_keys)
+                archive_objects(storage_keys)
             except Exception as e:
                 logger.warning(f"Cold archive failed: {e}")
                 return
@@ -68,7 +68,7 @@ def _do_check_restoring():
     with get_conn() as conn:
         cur = conn.cursor()
         cur.execute("""
-            SELECT t.id, t.token, f.r2_key
+            SELECT t.id, t.token, f.storage_key
             FROM files f
             JOIN transfers t ON f.transfer_id = t.id
             WHERE t.restore_requested_at IS NOT NULL
@@ -111,21 +111,21 @@ def _do_check_restoring():
 
         # Aborter les uploads multipart orphelins (transfers abandonnés depuis 48h)
         cur.execute("""
-            SELECT f.r2_key, f.multipart_upload_id
+            SELECT f.storage_key, f.multipart_upload_id
             FROM files f
             JOIN transfers t ON f.transfer_id = t.id
             WHERE t.confirmed_at IS NULL
               AND f.multipart_upload_id IS NOT NULL
               AND t.created_at < NOW() - INTERVAL '48 hours'
         """)
-        for r2_key, mp_id in cur.fetchall():
-            abort_multipart_upload(r2_key, mp_id)
+        for storage_key, mp_id in cur.fetchall():
+            abort_multipart_upload(storage_key, mp_id)
 
         # Supprimer les transfers non confirmés :
         # - sans fichiers multipart : après 2h (upload petit fichier échoué)
         # - avec fichiers multipart : après 48h (fenêtre de reprise)
         cur.execute("""
-            SELECT f.r2_key
+            SELECT f.storage_key
             FROM files f
             JOIN transfers t ON f.transfer_id = t.id
             WHERE t.confirmed_at IS NULL AND t.created_at < NOW() - INTERVAL '2 hours'
@@ -149,7 +149,7 @@ def _do_check_restoring():
         abandoned_small = cur.rowcount
 
         cur.execute("""
-            SELECT f.r2_key
+            SELECT f.storage_key
             FROM files f
             JOIN transfers t ON f.transfer_id = t.id
             WHERE t.confirmed_at IS NULL AND t.created_at < NOW() - INTERVAL '48 hours'

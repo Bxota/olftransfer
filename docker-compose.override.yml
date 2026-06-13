@@ -12,7 +12,6 @@ services:
       S3_ACCESS_KEY_ID: minioadmin
       S3_SECRET_ACCESS_KEY: minioadmin
       S3_BUCKET_NAME: olftransfer
-      S3_LOGS_BUCKET: olftransfer-logs
       BASE_URL: http://localhost:5173
       CORS_ALLOWED_ORIGINS: http://localhost:5173,http://localhost:8000
       APP_SECRET: ${APP_SECRET}
@@ -26,7 +25,7 @@ services:
     entrypoint: []
     command: ["uvicorn", "src.main:app", "--host", "0.0.0.0", "--port", "8000", "--reload"]
     volumes:
-      - ./app/src:/app/src:ro
+      - ./app/src:/app/src
     networks:
       - internal
     depends_on:

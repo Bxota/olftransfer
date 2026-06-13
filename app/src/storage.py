@@ -188,8 +188,15 @@ def download_object(object_key: str) -> bytes:
     return response["Body"].read()
 
 
+def _is_local() -> bool:
+    endpoint = os.environ.get("S3_ENDPOINT", "")
+    return "minio" in endpoint or "localhost" in endpoint or "127.0.0.1" in endpoint
+
+
 def archive_objects(object_keys: list[str]) -> None:
     """Déplace les objets vers la classe COLD_ARCHIVE (OVH / S3 Glacier)."""
+    if _is_local():
+        return
     client = get_client()
     bucket = _bucket()
     for key in object_keys:
@@ -204,6 +211,8 @@ def archive_objects(object_keys: list[str]) -> None:
 
 def restore_objects(object_keys: list[str], days: int = 7) -> None:
     """Lance la restauration depuis COLD_ARCHIVE vers le stockage chaud."""
+    if _is_local():
+        return
     client = get_client()
     bucket = _bucket()
     for key in object_keys:
@@ -213,16 +222,17 @@ def restore_objects(object_keys: list[str], days: int = 7) -> None:
                 Key=key,
                 RestoreRequest={"Days": days},
             )
-        except client.exceptions.RestoreAlreadyInProgress:
+        except client.exceptions.ObjectAlreadyInActiveTierError:
             pass
 
 
 def check_restore_complete(object_key: str) -> bool:
     """Retourne True si la restauration de l'objet est terminée."""
+    if _is_local():
+        return True
     client = get_client()
     head = client.head_object(Bucket=_bucket(), Key=object_key)
     restore = head.get("Restore", "")
-    # ongoing-request="false" signifie que la restauration est disponible
     return 'ongoing-request="false"' in restore
 
 

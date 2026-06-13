@@ -181,7 +181,7 @@ def _download_file_rows(token: str, password: str | None):
                 raise HTTPException(status_code=403, detail="Wrong password")
 
         cur.execute(
-            "SELECT filename, size_bytes, r2_key FROM files WHERE transfer_id = %s",
+            "SELECT filename, size_bytes, storage_key FROM files WHERE transfer_id = %s",
             (transfer_id,),
         )
         rows = cur.fetchall()
@@ -541,14 +541,14 @@ def create_transfer(body: CreateTransferRequest, request: Request, user: dict = 
 
         uploads = []
         for f in body.files:
-            r2_key = f"{transfer_id}/{secrets.token_hex(8)}_{f.filename}"
-            mp_upload_id = create_multipart_upload(r2_key, f.mime_type) if f.size_bytes >= MULTIPART_THRESHOLD else None
+            storage_key = f"{transfer_id}/{secrets.token_hex(8)}_{f.filename}"
+            mp_upload_id = create_multipart_upload(storage_key, f.mime_type) if f.size_bytes >= MULTIPART_THRESHOLD else None
             cur.execute(
                 """
-                INSERT INTO files (transfer_id, filename, size_bytes, mime_type, r2_key, multipart_upload_id)
+                INSERT INTO files (transfer_id, filename, size_bytes, mime_type, storage_key, multipart_upload_id)
                 VALUES (%s, %s, %s, %s, %s, %s) RETURNING id
                 """,
-                (transfer_id, f.filename, f.size_bytes, f.mime_type, r2_key, mp_upload_id),
+                (transfer_id, f.filename, f.size_bytes, f.mime_type, storage_key, mp_upload_id),
             )
             file_id = cur.fetchone()[0]
             if mp_upload_id:
@@ -561,7 +561,7 @@ def create_transfer(body: CreateTransferRequest, request: Request, user: dict = 
                 uploads.append(UploadUrl(
                     file_id=str(file_id),
                     filename=f.filename,
-                    upload_url=presigned_upload_url(r2_key, f.mime_type),
+                    upload_url=presigned_upload_url(storage_key, f.mime_type),
                 ))
 
     return CreateTransferResponse(
@@ -650,9 +650,9 @@ def batch_delete_transfers(payload: BatchDeleteRequest, request: Request, user: 
             transfer_id, files_purged_at = row
             if not files_purged_at:
                 # delete_objects fonctionne sur STANDARD et COLD_ARCHIVE
-                cur.execute("SELECT r2_key FROM files WHERE transfer_id = %s", (transfer_id,))
-                r2_keys = [r[0] for r in cur.fetchall()]
-                delete_objects(r2_keys)
+                cur.execute("SELECT storage_key FROM files WHERE transfer_id = %s", (transfer_id,))
+                storage_keys = [r[0] for r in cur.fetchall()]
+                delete_objects(storage_keys)
             cur.execute("DELETE FROM transfers WHERE id = %s", (transfer_id,))
         deleted_tokens.append(token)
     return BatchDeleteResponse(deleted=deleted_tokens)
@@ -720,10 +720,10 @@ def restore_transfer(token: str, user: dict = Depends(get_current_user)):
         if restore_requested_at:
             return RestoreTransferResponse(status="restoring")
 
-        cur.execute("SELECT r2_key FROM files WHERE transfer_id = %s", (transfer_id,))
-        r2_keys = [r[0] for r in cur.fetchall()]
+        cur.execute("SELECT storage_key FROM files WHERE transfer_id = %s", (transfer_id,))
+        storage_keys = [r[0] for r in cur.fetchall()]
 
-        restore_objects(r2_keys)
+        restore_objects(storage_keys)
 
         cur.execute(
             "UPDATE transfers SET restore_requested_at = NOW() WHERE id = %s",
@@ -748,10 +748,10 @@ def delete_transfer(token: str, request: Request, user: dict = Depends(get_curre
         transfer_id, files_purged_at, archived_at = row
 
         if not files_purged_at:
-            cur.execute("SELECT r2_key FROM files WHERE transfer_id = %s", (transfer_id,))
-            r2_keys = [r[0] for r in cur.fetchall()]
+            cur.execute("SELECT storage_key FROM files WHERE transfer_id = %s", (transfer_id,))
+            storage_keys = [r[0] for r in cur.fetchall()]
             # delete_objects fonctionne quelle que soit la classe de stockage (STANDARD ou COLD_ARCHIVE)
-            delete_objects(r2_keys)
+            delete_objects(storage_keys)
 
         cur.execute("DELETE FROM transfers WHERE id = %s", (transfer_id,))
 
@@ -797,19 +797,19 @@ def resume_transfer(token: str, user: dict = Depends(get_current_user)):
         transfer_id = row[0]
 
         cur.execute(
-            "SELECT id, filename, size_bytes, mime_type, r2_key, multipart_upload_id FROM files WHERE transfer_id = %s",
+            "SELECT id, filename, size_bytes, mime_type, storage_key, multipart_upload_id FROM files WHERE transfer_id = %s",
             (transfer_id,),
         )
         file_rows = cur.fetchall()
 
     uploads = []
-    for file_id, filename, size_bytes, mime_type, r2_key, mp_upload_id in file_rows:
+    for file_id, filename, size_bytes, mime_type, storage_key, mp_upload_id in file_rows:
         if mp_upload_id:
             try:
-                completed_parts = list_upload_parts(r2_key, mp_upload_id)
+                completed_parts = list_upload_parts(storage_key, mp_upload_id)
             except Exception:
                 # L'upload S3 a expiré — en créer un nouveau
-                mp_upload_id = create_multipart_upload(r2_key, mime_type)
+                mp_upload_id = create_multipart_upload(storage_key, mime_type)
                 with get_conn() as conn:
                     cur = conn.cursor()
                     cur.execute(
@@ -829,7 +829,7 @@ def resume_transfer(token: str, user: dict = Depends(get_current_user)):
                 file_id=str(file_id),
                 filename=filename,
                 size_bytes=size_bytes,
-                upload_url=presigned_upload_url(r2_key, mime_type),
+                upload_url=presigned_upload_url(storage_key, mime_type),
             ))
 
     return ResumeTransferResponse(
@@ -942,7 +942,7 @@ def get_part_url(file_id: str, body: PartUrlRequest, user: dict = Depends(get_cu
     with get_conn() as conn:
         cur = conn.cursor()
         cur.execute(
-            "SELECT f.r2_key FROM files f JOIN transfers t ON f.transfer_id = t.id WHERE f.id = %s AND t.user_id = %s",
+            "SELECT f.storage_key FROM files f JOIN transfers t ON f.transfer_id = t.id WHERE f.id = %s AND t.user_id = %s",
             (file_id, user["id"]),
         )
         row = cur.fetchone()
@@ -956,7 +956,7 @@ def complete_upload(file_id: str, body: CompleteUploadRequest, user: dict = Depe
     with get_conn() as conn:
         cur = conn.cursor()
         cur.execute(
-            "SELECT f.r2_key FROM files f JOIN transfers t ON f.transfer_id = t.id WHERE f.id = %s AND t.user_id = %s",
+            "SELECT f.storage_key FROM files f JOIN transfers t ON f.transfer_id = t.id WHERE f.id = %s AND t.user_id = %s",
             (file_id, user["id"]),
         )
         row = cur.fetchone()
@@ -970,7 +970,7 @@ def abort_upload(file_id: str, body: AbortUploadRequest, user: dict = Depends(ge
     with get_conn() as conn:
         cur = conn.cursor()
         cur.execute(
-            "SELECT f.r2_key FROM files f JOIN transfers t ON f.transfer_id = t.id WHERE f.id = %s AND t.user_id = %s",
+            "SELECT f.storage_key FROM files f JOIN transfers t ON f.transfer_id = t.id WHERE f.id = %s AND t.user_id = %s",
             (file_id, user["id"]),
         )
         row = cur.fetchone()
@@ -1088,20 +1088,20 @@ def create_transfer_for_request(req_token: str, body: CreateTransferRequest):
 
         uploads = []
         for f in body.files:
-            r2_key = f"{transfer_id}/{secrets.token_hex(8)}_{f.filename}"
-            mp_upload_id = create_multipart_upload(r2_key, f.mime_type) if f.size_bytes >= MULTIPART_THRESHOLD else None
+            storage_key = f"{transfer_id}/{secrets.token_hex(8)}_{f.filename}"
+            mp_upload_id = create_multipart_upload(storage_key, f.mime_type) if f.size_bytes >= MULTIPART_THRESHOLD else None
             cur.execute(
                 """
-                INSERT INTO files (transfer_id, filename, size_bytes, mime_type, r2_key, multipart_upload_id)
+                INSERT INTO files (transfer_id, filename, size_bytes, mime_type, storage_key, multipart_upload_id)
                 VALUES (%s, %s, %s, %s, %s, %s) RETURNING id
                 """,
-                (transfer_id, f.filename, f.size_bytes, f.mime_type, r2_key, mp_upload_id),
+                (transfer_id, f.filename, f.size_bytes, f.mime_type, storage_key, mp_upload_id),
             )
             file_id = cur.fetchone()[0]
             if mp_upload_id:
                 uploads.append(UploadUrl(file_id=str(file_id), filename=f.filename, multipart_upload_id=mp_upload_id))
             else:
-                uploads.append(UploadUrl(file_id=str(file_id), filename=f.filename, upload_url=presigned_upload_url(r2_key, f.mime_type)))
+                uploads.append(UploadUrl(file_id=str(file_id), filename=f.filename, upload_url=presigned_upload_url(storage_key, f.mime_type)))
 
     return CreateTransferResponse(token=token, share_url=f"{BASE_URL}/t/{token}", expires_at=expires_at, uploads=uploads)
 

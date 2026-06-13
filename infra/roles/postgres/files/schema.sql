@@ -38,7 +38,7 @@ CREATE TABLE IF NOT EXISTS files (
     filename    VARCHAR NOT NULL,
     size_bytes  BIGINT NOT NULL,
     mime_type   VARCHAR,
-    r2_key      VARCHAR NOT NULL
+    storage_key      VARCHAR NOT NULL
 );
 
 -- Migration : ajouter user_id si la table transfers existe déjà sans cette colonne
