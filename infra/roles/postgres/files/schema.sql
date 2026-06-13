@@ -109,6 +109,17 @@ BEGIN
     END IF;
 END $$;
 
+-- Migration : r2_key renommé en storage_key — relâcher la contrainte NOT NULL sur l'ancien nom
+DO $$
+BEGIN
+    IF EXISTS (
+        SELECT 1 FROM information_schema.columns
+        WHERE table_name = 'files' AND column_name = 'r2_key'
+    ) THEN
+        ALTER TABLE files ALTER COLUMN r2_key DROP NOT NULL;
+    END IF;
+END $$;
+
 -- Migration : multipart_upload_id pour la reprise des uploads interrompus
 DO $$
 BEGIN
