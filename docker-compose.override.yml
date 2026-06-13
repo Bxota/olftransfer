@@ -96,9 +96,6 @@ services:
       mc alias set local http://minio:9000 minioadmin minioadmin;
       mc mb --ignore-existing local/olftransfer;
       mc anonymous set download local/olftransfer;
-      mc mb --ignore-existing local/olftransfer-logs;
-      echo '2024-01-15T10:23:45Z olftransfer [GET] /abc123/photo.jpg 200 1234567 - Mozilla/5.0' | mc pipe local/olftransfer-logs/2024-01-15-10-access.log;
-      echo '2024-01-15T11:05:12Z olftransfer [PUT] /def456/document.pdf 200 9876543 - aws-sdk/3.0' | mc pipe local/olftransfer-logs/2024-01-15-11-access.log;
       exit 0;
       "
 
