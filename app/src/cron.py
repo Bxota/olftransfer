@@ -3,7 +3,7 @@ from apscheduler.schedulers.background import BackgroundScheduler
 from .db import get_conn
 from .storage import (
     abort_multipart_upload, archive_objects, check_restore_complete,
-    copy_to_standard, delete_objects, write_log_event,
+    copy_to_standard, delete_objects,
 )
 
 logger = logging.getLogger(__name__)
@@ -61,9 +61,6 @@ def _do_cleanup():
             )
         archived = cur.rowcount
 
-        for token in expired_tokens:
-            write_log_event("transfer_archived", token, {"reason": "expired"})
-
         logger.info(f"Cleanup: archived {archived} transfer(s) to cold storage")
 
 def _do_check_restoring():
@@ -109,7 +106,6 @@ def _do_check_restoring():
                     """,
                     (t_id,),
                 )
-                write_log_event("transfer_restored", info["token"], {})
                 logger.info(f"Restore complete for {info['token']}")
 
 

@@ -70,15 +70,12 @@ from .storage import (
     delete_objects,
     get_bucket_stats,
     get_client,
-    get_log_content,
-    list_log_objects,
     list_upload_parts,
     MULTIPART_THRESHOLD,
     presigned_download_url,
     presigned_upload_part,
     presigned_upload_url,
     restore_objects,
-    write_log_event,
 )
 
 STATIC_DIR = os.path.join(os.path.dirname(__file__), "static")
@@ -496,28 +493,6 @@ def trigger_cleanup():
     return OkResponse()
 
 
-@app.get("/admin/logs", tags=["Admin"], summary="Lister les logs d'accès S3", dependencies=[Depends(require_admin)])
-def list_access_logs(prefix: str = Query(default="", description="Filtrer par préfixe de clé S3")):
-    objects = list_log_objects(prefix=prefix)
-    return [
-        {
-            "key": o["Key"],
-            "size": o["Size"],
-            "last_modified": o["LastModified"].isoformat(),
-        }
-        for o in sorted(objects, key=lambda x: x["LastModified"], reverse=True)
-    ]
-
-
-@app.get("/admin/logs/content", tags=["Admin"], summary="Lire le contenu d'un log", dependencies=[Depends(require_admin)])
-def get_access_log(key: str = Query(..., description="Clé S3 du fichier de log")):
-    if not os.environ.get("S3_LOGS_BUCKET"):
-        raise HTTPException(status_code=503, detail="S3_LOGS_BUCKET non configuré")
-    try:
-        return {"key": key, "content": get_log_content(key)}
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
-
 
 # ── System ────────────────────────────────────────────────────────────────────
 
@@ -589,15 +564,6 @@ def create_transfer(body: CreateTransferRequest, request: Request, user: dict = 
                     upload_url=presigned_upload_url(r2_key, f.mime_type),
                 ))
 
-    write_log_event("transfer_created", token, {
-        "user_email": user["email"],
-        "file_count": len(body.files),
-        "total_bytes": sum(f.size_bytes for f in body.files),
-        "expires_in_hours": body.expires_in_hours,
-        "has_password": bool(body.password),
-        "max_downloads": body.max_downloads,
-        "ip": request.headers.get("x-forwarded-for", request.client.host if request.client else None),
-    })
     return CreateTransferResponse(
         token=token,
         share_url=f"{BASE_URL}/t/{token}",
@@ -688,11 +654,6 @@ def batch_delete_transfers(payload: BatchDeleteRequest, request: Request, user: 
                 r2_keys = [r[0] for r in cur.fetchall()]
                 delete_objects(r2_keys)
             cur.execute("DELETE FROM transfers WHERE id = %s", (transfer_id,))
-        write_log_event("transfer_deleted", token, {
-            "user_email": user["email"],
-            "reason": "manual_batch",
-            "ip": ip,
-        })
         deleted_tokens.append(token)
     return BatchDeleteResponse(deleted=deleted_tokens)
 
@@ -769,7 +730,6 @@ def restore_transfer(token: str, user: dict = Depends(get_current_user)):
             (transfer_id,),
         )
 
-    write_log_event("transfer_restore_requested", token, {"user_email": user["email"]})
     return RestoreTransferResponse(status="restoring")
 
 
@@ -795,11 +755,6 @@ def delete_transfer(token: str, request: Request, user: dict = Depends(get_curre
 
         cur.execute("DELETE FROM transfers WHERE id = %s", (transfer_id,))
 
-    write_log_event("transfer_deleted", token, {
-        "user_email": user["email"],
-        "reason": "manual",
-        "ip": request.headers.get("x-forwarded-for", request.client.host if request.client else None),
-    })
 
 
 @app.get("/transfers/pending", tags=["Transfers"], summary="Transferts en attente de confirmation", response_model=list[PendingTransferInfo])
@@ -944,13 +899,6 @@ def download_transfer(token: str, request: Request, password: str | None = Query
     total_bytes = sum(r[1] for r in rows)
     filenames = [r[0] for r in rows]
     downloader_email = downloader["email"] if downloader else None
-    write_log_event("download", token, {
-        "ip": request.headers.get("x-forwarded-for", request.client.host if request.client else None),
-        "user_agent": request.headers.get("user-agent"),
-        "file_count": file_count,
-        "total_bytes": total_bytes,
-    })
-
     background = BackgroundTask(send_download_notification, sender_email, token, transfer_name, filenames, total_bytes, downloader_email)
     return Response(
         content=DownloadResponse(files=[

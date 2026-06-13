@@ -14,15 +14,6 @@ interface UserItem {
   storage_quota_bytes: number
 }
 
-interface LogItem {
-  key: string
-  size: number
-  last_modified: string
-}
-
-function escHtml(s: string) {
-  return s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;')
-}
 
 export default function AdminPage() {
   const navigate = useNavigate()
@@ -36,14 +27,9 @@ export default function AdminPage() {
   const [users, setUsers] = useState<UserItem[]>([])
   const [stats, setStats] = useState<any>(null)
   const [statsLoading, setStatsLoading] = useState(false)
-  const [logs, setLogs] = useState<LogItem[]>([])
-  const [logsUnavailable, setLogsUnavailable] = useState(false)
-  const [logViewer, setLogViewer] = useState<{ key: string; content: string } | null>(null)
-
   useEffect(() => {
     loadUsers()
     loadStats()
-    loadLogs()
   }, [])
 
   async function loadUsers() {
@@ -58,21 +44,6 @@ export default function AdminPage() {
     setStatsLoading(false)
     if (!res.ok) return
     setStats(await res.json())
-  }
-
-  async function loadLogs() {
-    const res = await fetch('/admin/logs')
-    if (res.status === 503) { setLogsUnavailable(true); return }
-    if (!res.ok) return
-    setLogs(await res.json())
-  }
-
-  async function openLog(key: string) {
-    setLogViewer({ key, content: 'Chargement…' })
-    const res = await fetch(`/admin/logs/content?key=${encodeURIComponent(key)}`)
-    if (!res.ok) { setLogViewer({ key, content: 'Erreur lors du chargement du fichier.' }); return }
-    const data = await res.json()
-    setLogViewer({ key, content: data.content || '(fichier vide)' })
   }
 
   async function handleInvite(e: FormEvent) {
@@ -263,58 +234,6 @@ export default function AdminPage() {
             </div>
           </div>
 
-          {/* Logs */}
-          <div className="card">
-            <div className="card-body">
-              <p className="section-label">Access Logs OVH</p>
-              {logsUnavailable ? (
-                <p className="text-subtext" style={{ padding: '12px 0', fontSize: '.875rem' }}>
-                  Variable <code>S3_LOGS_BUCKET</code> non configurée.
-                </p>
-              ) : logs.length === 0 ? (
-                <p className="text-subtext" style={{ padding: '12px 0', fontSize: '.875rem' }}>Chargement…</p>
-              ) : (
-                <ul className="file-list" style={{ maxHeight: 300, overflowY: 'auto' }}>
-                  {logs.map(l => {
-                    const name = l.key.split('/').pop() ?? l.key
-                    const date = new Date(l.last_modified).toLocaleString('fr-FR')
-                    const size = l.size < 1024 ? `${l.size} o` : `${(l.size / 1024).toFixed(1)} Ko`
-                    return (
-                      <li key={l.key} className="file-item" style={{ cursor: 'pointer' }} onClick={() => openLog(l.key)}>
-                        <div className="file-type-icon">
-                          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-                            <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" />
-                            <polyline points="14 2 14 8 20 8" />
-                            <line x1="16" y1="13" x2="8" y2="13" />
-                            <line x1="16" y1="17" x2="8" y2="17" />
-                          </svg>
-                        </div>
-                        <div className="file-info">
-                          <div className="file-name">{name}</div>
-                          <div className="file-size">{date} · {size}</div>
-                        </div>
-                      </li>
-                    )
-                  })}
-                </ul>
-              )}
-            </div>
-          </div>
-
-          {/* Log viewer */}
-          {logViewer && (
-            <div className="card">
-              <div className="card-body">
-                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 12 }}>
-                  <p className="section-label" style={{ margin: 0 }}>{logViewer.key.split('/').pop()}</p>
-                  <button className="btn btn-ghost btn-sm" onClick={() => setLogViewer(null)}>Fermer</button>
-                </div>
-                <pre style={{ fontSize: '.75rem', overflowX: 'auto', whiteSpace: 'pre-wrap', background: 'var(--bg)', border: '1px solid var(--border)', borderRadius: 8, padding: 12, maxHeight: 400, overflowY: 'auto' }}>
-                  {logViewer.content}
-                </pre>
-              </div>
-            </div>
-          )}
         </div>
       </main>
     </>
