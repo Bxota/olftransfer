@@ -45,6 +45,7 @@ from .models import (
     OkResponse,
     PartUrlRequest,
     PartUrlResponse,
+    PatchTransferRequest,
     PendingTransferInfo,
     RegisterRequest,
     ResumeTransferResponse,
@@ -680,6 +681,44 @@ def batch_delete_transfers(payload: BatchDeleteRequest, request: Request, user: 
         })
         deleted_tokens.append(token)
     return BatchDeleteResponse(deleted=deleted_tokens)
+
+
+@app.patch("/transfers/{token}", tags=["Transfers"], summary="Modifier un transfert", response_model=OkResponse)
+def patch_transfer(token: str, body: PatchTransferRequest, user: dict = Depends(get_current_user)):
+    with get_conn() as conn:
+        cur = conn.cursor()
+        cur.execute(
+            "SELECT id FROM transfers WHERE token = %s AND user_id = %s AND confirmed_at IS NOT NULL",
+            (token, user["id"]),
+        )
+        row = cur.fetchone()
+        if not row:
+            raise HTTPException(status_code=404, detail="Transfer not found")
+        transfer_id = row[0]
+
+        fields, params = [], []
+        if body.expires_in_hours is not None:
+            fields.append("expires_at = NOW() + (%s || ' hours')::interval")
+            params.append(str(body.expires_in_hours))
+        if body.remove_password:
+            fields.append("password_hash = NULL")
+        elif body.password is not None and body.password != "":
+            fields.append("password_hash = %s")
+            params.append(hashlib.sha256(body.password.encode()).hexdigest())
+        if body.remove_max_downloads:
+            fields.append("max_downloads = NULL")
+        elif body.max_downloads is not None:
+            fields.append("max_downloads = %s")
+            params.append(body.max_downloads)
+        if body.name is not None:
+            fields.append("name = %s")
+            params.append(body.name or None)
+
+        if fields:
+            params.append(transfer_id)
+            cur.execute(f"UPDATE transfers SET {', '.join(fields)} WHERE id = %s", params)
+
+    return OkResponse()
 
 
 @app.delete("/transfers/{token}", tags=["Transfers"], summary="Supprimer un transfert", status_code=204)

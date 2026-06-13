@@ -518,6 +518,152 @@ body {
   padding: 24px;
 }
 
+/* ── Drop overlay & hint ── */
+.drop-overlay {
+  position: fixed; inset: 0; z-index: 300;
+  display: flex; align-items: center; justify-content: center;
+  background: rgba(240,253,250,.92);
+  border: 3px dashed var(--primary);
+  pointer-events: none;
+}
+.drop-overlay-inner { text-align: center; color: var(--primary); }
+.drop-overlay-inner svg { margin-bottom: 10px; }
+.drop-overlay-inner p { font-size: 15px; font-weight: 600; }
+
+.drop-hint {
+  display: flex; align-items: center; gap: 7px;
+  font-family: 'Geist Mono', monospace;
+  font-size: 12.5px; color: var(--subtext);
+  margin-bottom: 14px;
+}
+
+/* ── Share card ── */
+.share-card {
+  border: 1.5px solid var(--primary) !important;
+  box-shadow: 0 2px 16px rgba(13,148,136,.13) !important;
+  overflow: visible !important;
+}
+.share-card-header { border-radius: calc(var(--radius) - 1px) calc(var(--radius) - 1px) 0 0; }
+.share-card-header {
+  display: flex; align-items: center; justify-content: space-between;
+  padding: 10px 16px;
+  background: var(--primary-light);
+  border-bottom: 1px solid #c7ece6;
+}
+.share-card-status { display: flex; align-items: center; gap: 8px; }
+.pulse-dot {
+  width: 8px; height: 8px; border-radius: 50%;
+  background: var(--primary);
+  animation: pulse-ring 1.5s infinite;
+  flex-shrink: 0;
+}
+@keyframes pulse-ring {
+  0%   { box-shadow: 0 0 0 0 rgba(13,148,136,.4); }
+  70%  { box-shadow: 0 0 0 6px rgba(13,148,136,0); }
+  100% { box-shadow: 0 0 0 0 rgba(13,148,136,0); }
+}
+.share-card-label { font-size: 12px; font-weight: 600; color: #0F766E; letter-spacing: .3px; }
+.share-card-meta { font-family: 'Geist Mono', monospace; font-size: 11px; color: #5eaaa2; }
+
+/* ── Share link row ── */
+.share-link-row {
+  display: flex; gap: 8px; align-items: center;
+  background: var(--bg); border: 1px solid var(--border);
+  border-radius: 9px; padding: 10px 14px; margin-bottom: 14px;
+}
+.share-link-url {
+  flex: 1; font-family: 'Geist Mono', monospace;
+  font-size: 13.5px; color: var(--primary);
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+.share-link-url--loading { color: var(--subtext); font-style: italic; }
+
+/* ── Chips ── */
+.chip-options { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 14px; }
+.chip {
+  display: inline-flex; align-items: center; gap: 5px;
+  padding: 5px 12px; border-radius: 999px;
+  font-size: 12.5px; font-weight: 500; white-space: nowrap;
+  transition: background .15s;
+}
+.chip-active { background: var(--primary-light); border: 1px solid #c7ece6; color: #0F766E; cursor: pointer; }
+.chip-active:hover { background: #ddf6f1; }
+.chip-inactive { background: white; border: 1px dashed #d3d6db; color: var(--subtext); cursor: pointer; }
+.chip-inactive:hover { background: var(--bg); }
+
+/* ── Chip popover ── */
+.chip-wrap { position: relative; display: inline-flex; }
+.chip-popover {
+  position: absolute; top: calc(100% + 6px); left: 0; z-index: 50;
+  background: var(--card); border: 1px solid var(--border);
+  border-radius: 10px; box-shadow: 0 4px 20px rgba(0,0,0,.12);
+  padding: 12px; min-width: 200px;
+  display: flex; flex-direction: column; gap: 8px;
+}
+.chip-popover select, .chip-popover input[type=password], .chip-popover input[type=number] {
+  padding: 7px 10px; border: 1px solid var(--border); border-radius: 7px;
+  font-size: 13px; outline: none; background: white; color: var(--text);
+  transition: border-color .15s;
+}
+.chip-popover select:focus, .chip-popover input:focus { border-color: var(--primary); }
+.chip-popover-actions { display: flex; gap: 6px; }
+.chip-popover-actions button { flex: 1; padding: 6px; border-radius: 7px; font-size: 12px; font-weight: 500; cursor: pointer; border: none; transition: background .15s; }
+.chip-popover-save { background: var(--primary); color: white; }
+.chip-popover-save:hover { background: var(--primary-dark); }
+.chip-popover-cancel { background: var(--bg); color: var(--subtext); border: 1px solid var(--border) !important; }
+.chip-popover-remove { background: #FEF2F2; color: #991B1B; border: 1px solid #FECACA !important; }
+
+/* ── Sparkline ── */
+.sparkline { display: flex; align-items: flex-end; gap: 2px; width: 60px; height: 28px; flex-shrink: 0; }
+.sparkline-bar { flex: 1; border-radius: 2px 2px 0 0; min-height: 3px; }
+.sparkline-bar--active { background: #cdeee9; }
+.sparkline-bar--last { background: var(--primary); }
+.sparkline-bar--expired { background: #e7e9ec; }
+
+/* ── History stats ── */
+.history-stats { display: flex; flex-direction: column; align-items: flex-end; flex-shrink: 0; gap: 1px; }
+.history-stat-dl { font-size: 13px; font-weight: 600; color: var(--primary); font-family: 'Geist Mono', monospace; }
+
+/* ── Expiry countdown chip ── */
+.expiry-chip {
+  display: inline-flex; align-items: center; gap: 5px;
+  padding: 4px 10px; border-radius: 999px;
+  font-size: 12px; font-weight: 500;
+  background: #FFFBEB; border: 1px solid #FDE68A; color: #B45309;
+}
+
+/* ── Trust line ── */
+.trust-line {
+  display: flex; align-items: center; gap: 16px; justify-content: center;
+  padding-top: 14px; border-top: 1px solid var(--border);
+  flex-wrap: wrap;
+}
+.trust-item { display: flex; align-items: center; gap: 5px; font-size: 12.5px; color: var(--subtext); }
+.trust-item--verified { color: var(--success); font-weight: 600; }
+
+/* ── Download icon button ── */
+.download-icon-btn {
+  width: 34px; height: 34px; flex-shrink: 0;
+  display: flex; align-items: center; justify-content: center;
+  border-radius: 8px; border: 1px solid var(--border);
+  background: white; color: var(--subtext);
+  cursor: pointer; transition: all .15s;
+}
+.download-icon-btn:hover { background: var(--primary); color: white; border-color: var(--primary); }
+.download-icon-btn:active { transform: scale(0.96); }
+
+/* ── Sender line ── */
+.transfer-sender {
+  display: flex; align-items: center; gap: 8px; justify-content: center;
+  font-size: 13px; color: var(--subtext); margin-bottom: 10px;
+}
+.sender-avatar {
+  width: 26px; height: 26px; border-radius: 50%;
+  background: var(--primary); color: white;
+  display: flex; align-items: center; justify-content: center;
+  font-size: 11px; font-weight: 700; flex-shrink: 0;
+}
+
 /* ── Utils ── */
 .hidden { display: none !important; }
 .mt-2 { margin-top: 8px; }

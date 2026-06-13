@@ -155,6 +155,15 @@ class UserTransfer(BaseModel):
     files: list[FileInfo]
 
 
+class PatchTransferRequest(BaseModel):
+    expires_in_hours: int | None = Field(default=None, ge=1)
+    password: str | None = Field(default=None, description="None = inchangé, '' = supprimer, string = nouveau mot de passe")
+    remove_password: bool = Field(default=False)
+    max_downloads: int | None = Field(default=None, ge=1)
+    remove_max_downloads: bool = Field(default=False)
+    name: str | None = Field(default=None, max_length=100)
+
+
 class BatchDeleteRequest(BaseModel):
     tokens: list[str]
 

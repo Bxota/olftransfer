@@ -7,7 +7,6 @@ import BrandZoomIcon from '../icons/brand-zoom-icon'
 import FileDescriptionIcon from '../icons/file-description-icon'
 import CodeIcon from '../icons/code-icon'
 import DownloadIcon from '../icons/download-icon'
-import SendIcon from '../icons/send-icon'
 import TrashIcon from '../icons/trash-icon'
 import RefreshIcon from '../icons/refresh-icon'
 import type { AnimatedIconHandle } from '../icons/types'
@@ -150,6 +149,19 @@ function uploadFile(
   return uploadFileSingle(file, uploadInfo.upload_url, index, setProgress)
 }
 
+// ── Sparkline helper ─────────────────────────────────────────────────────────
+
+function generateSparkline(token: string, downloadCount: number): number[] {
+  const seed = token.split('').reduce((a, c) => a + c.charCodeAt(0), 0)
+  const bars = Array.from({ length: 8 }, (_, i) => {
+    const pseudo = ((seed * (i + 1) * 7919) % 100)
+    return Math.max(10, pseudo % 70 + 10)
+  })
+  bars[7] = Math.max(bars[6], bars[7])
+  const max = Math.max(...bars)
+  return bars.map(b => Math.round((b / max) * 100))
+}
+
 // ── Component ────────────────────────────────────────────────────────────────
 
 export default function HomePage() {
@@ -160,15 +172,23 @@ export default function HomePage() {
   const [files, setFiles] = useState<File[]>([])
   const [fileNames, setFileNames] = useState<string[]>([])
   const thumbUrlsRef = useRef<Record<number, string>>({})
-  const [thumbVersion, setThumbVersion] = useState(0) // trigger re-render
+  const [thumbVersion, setThumbVersion] = useState(0)
   const uploadIconRef = useRef<AnimatedIconHandle>(null)
-  const sendIconRef = useRef<AnimatedIconHandle>(null)
 
-  // Steps
-  const [step, setStep] = useState<'select' | 'uploading' | 'done'>('select')
-  const [progress, setProgress] = useState<Record<number, FileProgress>>({})
+  // Transfer state
+  const [shareToken, setShareToken] = useState('')
   const [shareLink, setShareLink] = useState('')
+  const [creating, setCreating] = useState(false)
+  const [uploading, setUploading] = useState(false)
   const [sendError, setSendError] = useState('')
+  const [progress, setProgress] = useState<Record<number, FileProgress>>({})
+
+  // Chip popovers
+  const [openChip, setOpenChip] = useState<'expiry' | 'password' | 'maxdl' | null>(null)
+  const [chipExpiry, setChipExpiry] = useState('168')
+  const [chipPassword, setChipPassword] = useState('')
+  const [chipMaxDl, setChipMaxDl] = useState('')
+  const [chipSaving, setChipSaving] = useState(false)
 
   // Options
   const [transferName, setTransferName] = useState('')
@@ -198,8 +218,12 @@ export default function HomePage() {
   const [bulkConfirm, setBulkConfirm] = useState(false)
   const [deleteError, setDeleteError] = useState('')
 
-  // Drag state
-  const [dragOver, setDragOver] = useState(false)
+  // Global drag overlay
+  const [globalDragOver, setGlobalDragOver] = useState(false)
+  const dragCounterRef = useRef(0)
+
+  const stateRef = useRef({ files, fileNames, shareLink, uploading, creating })
+  useEffect(() => { stateRef.current = { files, fileNames, shareLink, uploading, creating } })
 
   useEffect(() => { loadHistory(); checkPendingTransfers() }, [])
 
@@ -211,12 +235,45 @@ export default function HomePage() {
     return () => document.removeEventListener('keydown', onKeyDown)
   }, [])
 
-  // Cleanup thumb URLs on unmount
+  useEffect(() => {
+    function onDragEnter(e: globalThis.DragEvent) {
+      e.preventDefault()
+      dragCounterRef.current++
+      if (dragCounterRef.current === 1) setGlobalDragOver(true)
+    }
+    function onDragLeave() {
+      dragCounterRef.current--
+      if (dragCounterRef.current <= 0) { dragCounterRef.current = 0; setGlobalDragOver(false) }
+    }
+    function onDragOver(e: globalThis.DragEvent) { e.preventDefault() }
+    function onDrop(e: globalThis.DragEvent) {
+      e.preventDefault()
+      dragCounterRef.current = 0
+      setGlobalDragOver(false)
+      const dropped = e.dataTransfer?.files
+      if (dropped && dropped.length > 0) {
+        const s = stateRef.current
+        if (!s.uploading && !s.creating) {
+          handleNewFilesWithState([...dropped], s.files, s.fileNames)
+        }
+      }
+    }
+    window.addEventListener('dragenter', onDragEnter)
+    window.addEventListener('dragleave', onDragLeave)
+    window.addEventListener('dragover', onDragOver)
+    window.addEventListener('drop', onDrop)
+    return () => {
+      window.removeEventListener('dragenter', onDragEnter)
+      window.removeEventListener('dragleave', onDragLeave)
+      window.removeEventListener('dragover', onDragOver)
+      window.removeEventListener('drop', onDrop)
+    }
+  }, [])
+
   useEffect(() => () => {
     Object.values(thumbUrlsRef.current).forEach(u => URL.revokeObjectURL(u))
   }, [])
 
-  // Preview URL management
   useEffect(() => {
     if (!previewFile) { setPreviewUrl(null); setPreviewText(null); return }
     const cat = getFileCategory(previewFile)
@@ -233,31 +290,34 @@ export default function HomePage() {
 
   // ── Helpers ──────────────────────────────────────────────────────────────
 
-  function getEffectiveName(i: number, currentFiles = files, currentNames = fileNames) {
-    const stem = (currentNames[i] ?? '').trim() || getStem(currentFiles[i].name)
-    return stem + getExt(currentFiles[i].name)
+  function getEffectiveNameFor(i: number, fls: File[], nms: string[]) {
+    const stem = (nms[i] ?? '').trim() || getStem(fls[i].name)
+    return stem + getExt(fls[i].name)
   }
 
-  function addFiles(newFiles: File[]) {
-    setFiles(prev => {
-      const next = [...prev, ...newFiles]
-      newFiles.forEach((f, j) => {
-        const idx = prev.length + j
-        if (getFileCategory(f) === 'image') {
-          thumbUrlsRef.current[idx] = URL.createObjectURL(f)
-        }
-      })
-      setThumbVersion(v => v + 1)
-      return next
+  function getEffectiveName(i: number) { return getEffectiveNameFor(i, files, fileNames) }
+
+  function handleNewFilesWithState(newFiles: File[], currentFiles: File[], currentNames: string[]) {
+    const allFiles = [...currentFiles, ...newFiles]
+    const allNames = [...currentNames, ...newFiles.map(f => getStem(f.name))]
+    newFiles.forEach((f, j) => {
+      const idx = currentFiles.length + j
+      if (getFileCategory(f) === 'image') thumbUrlsRef.current[idx] = URL.createObjectURL(f)
     })
-    setFileNames(prev => [...prev, ...newFiles.map(f => getStem(f.name))])
+    setThumbVersion(v => v + 1)
+    setFiles(allFiles)
+    setFileNames(allNames)
+    startTransfer(allFiles, allNames)
+  }
+
+  function handleNewFiles(newFiles: File[]) {
+    handleNewFilesWithState(newFiles, files, fileNames)
   }
 
   function removeFile(i: number) {
     if (thumbUrlsRef.current[i]) {
       URL.revokeObjectURL(thumbUrlsRef.current[i])
       delete thumbUrlsRef.current[i]
-      // Shift remaining indices
       const newThumbs: Record<number, string> = {}
       Object.keys(thumbUrlsRef.current).forEach(k => {
         const n = parseInt(k)
@@ -278,9 +338,37 @@ export default function HomePage() {
     setFiles([])
     setFileNames([])
     setTransferName('')
-    setStep('select')
+    setShareToken('')
+    setShareLink('')
     setSendError('')
     setProgress({})
+    setUploading(false)
+    setCreating(false)
+    setOpenChip(null)
+    setChipExpiry('168')
+    setChipPassword('')
+    setChipMaxDl('')
+  }
+
+  async function patchTransfer(patch: {
+    expires_in_hours?: number
+    password?: string
+    remove_password?: boolean
+    max_downloads?: number
+    remove_max_downloads?: boolean
+  }) {
+    if (!shareToken) return
+    setChipSaving(true)
+    try {
+      await fetch(`/transfers/${shareToken}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(patch),
+      })
+    } finally {
+      setChipSaving(false)
+      setOpenChip(null)
+    }
   }
 
   function showVirusWarning(filename: string, virus: string): Promise<boolean> {
@@ -339,8 +427,9 @@ export default function HomePage() {
 
       setFiles(orderedFiles)
       setFileNames(resumeNames)
+      setShareLink(resumeData.share_url)
       setResumeBanner(b => ({ ...b, show: false }))
-      setStep('uploading')
+      setUploading(true)
       setProgress({})
 
       for (let i = 0; i < resumeData.uploads.length; i++) {
@@ -364,31 +453,29 @@ export default function HomePage() {
 
       clearSession()
       pendingTransferRef.current = null
-      setStep('done')
-      setShareLink(resumeData.share_url)
+      setUploading(false)
       loadHistory()
     } catch (err: any) {
       setResumeBanner(b => ({ ...b, show: true, error: err.message }))
-      setStep('select')
+      setUploading(false)
     }
   }
 
-  // ── Send ─────────────────────────────────────────────────────────────────
+  // ── Start transfer ────────────────────────────────────────────────────────
 
-  async function send() {
-    if (files.length === 0) return
+  async function startTransfer(filesToSend: File[], namesToSend: string[]) {
+    if (filesToSend.length === 0) return
     setSendError('')
-
-    const currentFiles = files
-    const currentNames = fileNames
+    setCreating(true)
+    setProgress({})
 
     try {
       const res = await fetch('/transfers', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          files: currentFiles.map((f, i) => ({
-            filename: getEffectiveName(i, currentFiles, currentNames),
+          files: filesToSend.map((f, i) => ({
+            filename: getEffectiveNameFor(i, filesToSend, namesToSend),
             size_bytes: f.size,
             mime_type: f.type || null,
           })),
@@ -401,13 +488,17 @@ export default function HomePage() {
       if (!res.ok) throw new Error((await res.json()).detail || 'Erreur serveur')
       const transfer = await res.json()
 
-      saveSession(transfer, currentFiles)
+      saveSession(transfer, filesToSend)
+      setShareToken(transfer.token)
+      setShareLink(transfer.share_url)
+      setChipExpiry(expiry)
+      setChipPassword(transferPassword)
+      setChipMaxDl(maxDownloads)
+      setCreating(false)
+      setUploading(true)
 
-      setStep('uploading')
-      setProgress({})
-
-      for (let i = 0; i < currentFiles.length; i++)
-        await uploadFile(currentFiles[i], transfer.uploads[i], i, setProgress)
+      for (let i = 0; i < filesToSend.length; i++)
+        await uploadFile(filesToSend[i], transfer.uploads[i], i, setProgress)
 
       let confirmRes = await fetch(`/transfers/${transfer.token}/confirm`, {
         method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({}),
@@ -423,11 +514,11 @@ export default function HomePage() {
       if (!confirmRes.ok) throw new Error(await confirmRes.json().then((d: any) => d.detail).catch(() => 'Erreur'))
 
       clearSession()
-      setStep('done')
-      setShareLink(transfer.share_url)
+      setUploading(false)
       loadHistory()
     } catch (err: any) {
-      setStep('select')
+      setCreating(false)
+      setUploading(false)
       setSendError(err.message)
     }
   }
@@ -489,7 +580,16 @@ export default function HomePage() {
 
   // ── Render ───────────────────────────────────────────────────────────────
 
+  // Close chip popovers on outside click
+  useEffect(() => {
+    if (!openChip) return
+    function onOutside() { setOpenChip(null) }
+    document.addEventListener('click', onOutside)
+    return () => document.removeEventListener('click', onOutside)
+  }, [openChip])
+
   const hasFiles = files.length > 0
+  const allDone = hasFiles && Object.keys(progress).length === files.length && Object.values(progress).every(p => p.done)
 
   return (
     <>
@@ -508,10 +608,22 @@ export default function HomePage() {
         </div>
       </header>
 
+      {globalDragOver && (
+        <div className="drop-overlay">
+          <div className="drop-overlay-inner">
+            <svg width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5">
+              <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" />
+              <polyline points="17 8 12 3 7 8" />
+              <line x1="12" y1="3" x2="12" y2="15" />
+            </svg>
+            <p>Déposer pour partager</p>
+          </div>
+        </div>
+      )}
+
       <main className="page">
         <div className="page-narrow">
 
-          {/* Resume banner */}
           {resumeBanner.show && (
             <div style={{ marginBottom: 16 }}>
               <div className="card" style={{ borderColor: '#F59E0B', background: '#FFFBEB' }}>
@@ -548,21 +660,29 @@ export default function HomePage() {
             </div>
           )}
 
-          {/* Step: select */}
-          {step === 'select' && (
+          <div className="drop-hint">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="var(--primary)" strokeWidth="2.5">
+              <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" />
+              <polyline points="17 8 12 3 7 8" />
+              <line x1="12" y1="3" x2="12" y2="15" />
+            </svg>
+            Glissez des fichiers n'importe où sur la page
+          </div>
+
+          {!hasFiles && (
             <div className="card">
               <div className="card-body">
                 <div
-                  className={`dropzone${dragOver ? ' drag-over' : ''}`}
-                  onDragOver={e => { e.preventDefault(); setDragOver(true) }}
-                  onDragLeave={() => setDragOver(false)}
-                  onDrop={e => { e.preventDefault(); setDragOver(false); addFiles([...e.dataTransfer.files]) }}
+                  className="dropzone"
+                  onDragOver={(e: DragEvent<HTMLDivElement>) => e.preventDefault()}
                   onClick={() => document.getElementById('fileInput')?.click()}
                   onMouseEnter={() => uploadIconRef.current?.startAnimation()}
                   onMouseLeave={() => uploadIconRef.current?.stopAnimation()}
                 >
                   <input id="fileInput" type="file" multiple style={{ display: 'none' }}
-                    onChange={(e: ChangeEvent<HTMLInputElement>) => { if (e.target.files) { addFiles([...e.target.files]); e.target.value = '' } }} />
+                    onChange={(e: ChangeEvent<HTMLInputElement>) => {
+                      if (e.target.files) { handleNewFiles([...e.target.files]); e.target.value = '' }
+                    }} />
                   <div className="dropzone-icon">
                     <UploadIcon ref={uploadIconRef} size={40} strokeWidth={1.5} disableHover />
                   </div>
@@ -570,160 +690,144 @@ export default function HomePage() {
                   <p>ou <span className="browse">parcourir</span> depuis votre appareil</p>
                 </div>
               </div>
-
-              {hasFiles && (
-                <div className="card-body">
-                  <p className="section-label">Fichiers sélectionnés</p>
-                  <ul className="file-list">
-                    {files.map((f, i) => {
-                      const cat = getFileCategory(f)
-                      const previewable = cat !== 'other'
-                      const thumb = thumbUrlsRef.current[i]
-                      return (
-                        <li key={i} className="file-item">
-                          {cat === 'image' && thumb ? (
-                            <img className="file-thumb" src={thumb} alt="" title="Aperçu" onClick={() => setPreviewFile(f)} />
-                          ) : (
-                            <div
-                              className={`file-type-icon${previewable ? ' previewable' : ''}`}
-                              title={previewable ? 'Aperçu' : ''}
-                              style={previewable ? { cursor: 'pointer' } : {}}
-                              onClick={previewable ? () => setPreviewFile(f) : undefined}
-                            >
-                              {cat === 'image' ? <CameraIcon size={16} strokeWidth={2} /> :
-                               cat === 'video' ? <BrandZoomIcon size={16} strokeWidth={2} /> :
-                               cat === 'code' ? <CodeIcon size={16} strokeWidth={2} /> :
-                               <FileDescriptionIcon size={16} strokeWidth={2} />}
-                            </div>
-                          )}
-                          <div className="file-info">
-                            <div className="file-name-edit">
-                              <input
-                                className="file-name-input"
-                                type="text"
-                                value={fileNames[i] ?? ''}
-                                onChange={e => setFileNames(prev => { const n = [...prev]; n[i] = e.target.value; return n })}
-                                title="Renommer le fichier"
-                              />
-                              {getExt(f.name) && <span className="file-ext">{getExt(f.name)}</span>}
-                            </div>
-                            <div className="file-size">{formatSize(f.size)}</div>
-                          </div>
-                          <button className="file-remove" title="Retirer" onClick={() => removeFile(i)}>
-                            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-                              <line x1="18" y1="6" x2="6" y2="18" /><line x1="6" y1="6" x2="18" y2="18" />
-                            </svg>
-                          </button>
-                        </li>
-                      )
-                    })}
-                  </ul>
-                  <button className="btn btn-outline btn-sm mt-4" onClick={() => document.getElementById('fileInput')?.click()}>
-                    + Ajouter des fichiers
-                  </button>
-                </div>
-              )}
-
-              {hasFiles && (
-                <div className="card-body">
-                  <p className="section-label">Options</p>
-                  <div className="options-grid">
-                    <div className="field" style={{ gridColumn: '1 / -1' }}>
-                      <label htmlFor="transferName">Nom du transfert (optionnel)</label>
-                      <input id="transferName" type="text" placeholder="ex : Photos vacances 2026" maxLength={100} value={transferName} onChange={e => setTransferName(e.target.value)} />
-                    </div>
-                    <div className="field">
-                      <label htmlFor="expiry">Expiration</label>
-                      <select id="expiry" value={expiry} onChange={e => setExpiry(e.target.value)}>
-                        <option value="24">1 jour</option>
-                        <option value="72">3 jours</option>
-                        <option value="168">7 jours</option>
-                        <option value="336">14 jours</option>
-                        <option value="720">30 jours</option>
-                      </select>
-                    </div>
-                    <div className="field">
-                      <label htmlFor="maxDownloads">Téléchargements max</label>
-                      <input id="maxDownloads" type="number" placeholder="Illimité" min="1" value={maxDownloads} onChange={e => setMaxDownloads(e.target.value)} />
-                    </div>
-                    <div className="field" style={{ gridColumn: '1 / -1' }}>
-                      <label htmlFor="transferPassword">Mot de passe (optionnel)</label>
-                      <input id="transferPassword" type="password" placeholder="Protéger par mot de passe" value={transferPassword} onChange={e => setTransferPassword(e.target.value)} />
-                    </div>
-                  </div>
-                </div>
-              )}
-
-              {hasFiles && (
-                <div className="card-body">
-                  {sendError && <div className="alert alert-error mt-0 mb-3" style={{ marginBottom: 12 }}>{sendError}</div>}
-                  <button
-                    className="btn btn-primary btn-full"
-                    onClick={send}
-                    onMouseEnter={() => sendIconRef.current?.startAnimation()}
-                    onMouseLeave={() => sendIconRef.current?.stopAnimation()}
-                  >
-                    <SendIcon ref={sendIconRef} size={16} strokeWidth={2.5} color="currentColor" disableHover />
-                    Envoyer
-                  </button>
-                </div>
-              )}
             </div>
           )}
 
-          {/* Step: uploading */}
-          {step === 'uploading' && (
-            <div className="card">
+          {hasFiles && (
+            <div className="card share-card">
+              <div className="share-card-header">
+                <div className="share-card-status">
+                  {!allDone && <div className="pulse-dot" />}
+                  {allDone && (
+                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#0F766E" strokeWidth="2.5">
+                      <polyline points="20 6 9 17 4 12" />
+                    </svg>
+                  )}
+                  <span className="share-card-label">
+                    {creating ? 'CRÉATION DU LIEN…' : allDone ? 'TRANSFERT TERMINÉ' : 'LIEN ACTIF — PARTAGEABLE MAINTENANT'}
+                  </span>
+                </div>
+                {uploading && <span className="share-card-meta">upload en arrière-plan</span>}
+              </div>
+
               <div className="card-body">
-                <p className="section-label">Envoi en cours</p>
+                <div className="share-link-row">
+                  <span className={`share-link-url${!shareLink ? ' share-link-url--loading' : ''}`}>
+                    {shareLink || 'Génération du lien…'}
+                  </span>
+                  {shareLink && <CopyBtn url={shareLink} style="primary" />}
+                </div>
+
                 <ul className="file-list">
                   {files.map((f, i) => {
                     const prog = progress[i] ?? { pct: 0, done: false }
                     const cat = getFileCategory(f)
+                    const thumb = thumbUrlsRef.current[i]
                     return (
                       <li key={i} className="file-item">
-                        <div className="file-type-icon">
-                          {cat === 'video' ? <BrandZoomIcon size={16} strokeWidth={2} /> :
-                           cat === 'code' ? <CodeIcon size={16} strokeWidth={2} /> :
-                           <FileDescriptionIcon size={16} strokeWidth={2} />}
-                        </div>
+                        {cat === 'image' && thumb ? (
+                          <img className="file-thumb" src={thumb} alt="" />
+                        ) : (
+                          <div className="file-type-icon">
+                            {cat === 'image' ? <CameraIcon size={16} strokeWidth={2} /> :
+                             cat === 'video' ? <BrandZoomIcon size={16} strokeWidth={2} /> :
+                             cat === 'code' ? <CodeIcon size={16} strokeWidth={2} /> :
+                             <FileDescriptionIcon size={16} strokeWidth={2} />}
+                          </div>
+                        )}
                         <div className="file-info">
                           <div className="file-name">{getEffectiveName(i)}</div>
-                          <div className="progress">
-                            <div className="progress-bar" style={{ width: `${prog.pct}%` }} />
-                          </div>
+                          {(uploading || prog.done) && (
+                            <div className="progress">
+                              <div className="progress-bar" style={{ width: `${prog.pct}%` }} />
+                            </div>
+                          )}
                         </div>
-                        <span className={`file-status${prog.done ? ' done' : ''}`}>
-                          {prog.done ? 'Envoyé' : prog.pct === 0 ? 'En attente' : `${prog.pct}%`}
+                        <span className={`file-status${prog.done ? ' done' : ''}`} style={{ fontFamily: prog.done ? undefined : "'Geist Mono', monospace" }}>
+                          {prog.done ? 'Envoyé' : uploading ? `${prog.pct}%` : formatSize(f.size)}
                         </span>
                       </li>
                     )
                   })}
                 </ul>
-              </div>
-            </div>
-          )}
 
-          {/* Step: done */}
-          {step === 'done' && (
-            <div className="card">
-              <div className="card-body text-center">
-                <div style={{ width: 52, height: 52, background: '#F0FDF4', borderRadius: '50%', display: 'flex', alignItems: 'center', justifyContent: 'center', margin: '0 auto 16px' }}>
-                  <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="#10B981" strokeWidth="2.5">
-                    <polyline points="20 6 9 17 4 12" />
-                  </svg>
+                <div className="chip-options" onClick={e => e.stopPropagation()}>
+                  {/* Expiry chip */}
+                  <div className="chip-wrap">
+                    <button className="chip chip-active" onClick={() => setOpenChip(openChip === 'expiry' ? null : 'expiry')}>
+                      ⏱ Expire dans {chipExpiry === '24' ? '1 jour' : chipExpiry === '72' ? '3 jours' : chipExpiry === '168' ? '7 jours' : chipExpiry === '336' ? '14 jours' : '30 jours'} ▾
+                    </button>
+                    {openChip === 'expiry' && (
+                      <div className="chip-popover">
+                        <select value={chipExpiry} onChange={e => setChipExpiry(e.target.value)}>
+                          <option value="24">1 jour</option>
+                          <option value="72">3 jours</option>
+                          <option value="168">7 jours</option>
+                          <option value="336">14 jours</option>
+                          <option value="720">30 jours</option>
+                        </select>
+                        <div className="chip-popover-actions">
+                          <button className="chip-popover-cancel" onClick={() => setOpenChip(null)}>Annuler</button>
+                          <button className="chip-popover-save" disabled={chipSaving} onClick={() => patchTransfer({ expires_in_hours: parseInt(chipExpiry) })}>
+                            {chipSaving ? '…' : 'Appliquer'}
+                          </button>
+                        </div>
+                      </div>
+                    )}
+                  </div>
+
+                  {/* Password chip */}
+                  <div className="chip-wrap">
+                    <button className={`chip ${chipPassword ? 'chip-active' : 'chip-inactive'}`} onClick={() => setOpenChip(openChip === 'password' ? null : 'password')}>
+                      {chipPassword ? '🔒 Protégé ▾' : '＋ Mot de passe'}
+                    </button>
+                    {openChip === 'password' && (
+                      <div className="chip-popover">
+                        <input type="password" placeholder="Nouveau mot de passe" value={chipPassword} onChange={e => setChipPassword(e.target.value)} autoFocus />
+                        <div className="chip-popover-actions">
+                          {chipPassword && <button className="chip-popover-remove" disabled={chipSaving} onClick={() => { setChipPassword(''); patchTransfer({ remove_password: true }) }}>Retirer</button>}
+                          <button className="chip-popover-cancel" onClick={() => setOpenChip(null)}>Annuler</button>
+                          <button className="chip-popover-save" disabled={chipSaving} onClick={() => patchTransfer({ password: chipPassword })}>
+                            {chipSaving ? '…' : 'Appliquer'}
+                          </button>
+                        </div>
+                      </div>
+                    )}
+                  </div>
+
+                  {/* Max downloads chip */}
+                  <div className="chip-wrap">
+                    <button className={`chip ${chipMaxDl ? 'chip-active' : 'chip-inactive'}`} onClick={() => setOpenChip(openChip === 'maxdl' ? null : 'maxdl')}>
+                      {chipMaxDl ? `⤓ ${chipMaxDl} téléch. max ▾` : '⤓ Limiter téléchargements'}
+                    </button>
+                    {openChip === 'maxdl' && (
+                      <div className="chip-popover">
+                        <input type="number" placeholder="Illimité" min="1" value={chipMaxDl} onChange={e => setChipMaxDl(e.target.value)} autoFocus />
+                        <div className="chip-popover-actions">
+                          {chipMaxDl && <button className="chip-popover-remove" disabled={chipSaving} onClick={() => { setChipMaxDl(''); patchTransfer({ remove_max_downloads: true }) }}>Retirer</button>}
+                          <button className="chip-popover-cancel" onClick={() => setOpenChip(null)}>Annuler</button>
+                          <button className="chip-popover-save" disabled={chipSaving} onClick={() => patchTransfer({ max_downloads: chipMaxDl ? parseInt(chipMaxDl) : undefined })}>
+                            {chipSaving ? '…' : 'Appliquer'}
+                          </button>
+                        </div>
+                      </div>
+                    )}
+                  </div>
+
+                  {!uploading && !creating && (
+                    <button className="chip chip-inactive" onClick={() => { resetTransfer(); setTimeout(() => document.getElementById('fileInput')?.click(), 50) }}>
+                      ＋ Nouveau transfert
+                    </button>
+                  )}
                 </div>
-                <h2 style={{ fontSize: 18, fontWeight: 700, marginBottom: 6 }}>Transfert prêt</h2>
-                <p className="text-subtext" style={{ marginBottom: 20 }}>Partagez ce lien avec vos destinataires.</p>
-                <CopyBox text={shareLink} />
-                <button className="btn btn-outline btn-full mt-4" onClick={resetTransfer}>Nouveau transfert</button>
+
+                {sendError && <div className="alert alert-error mt-3">{sendError}</div>}
               </div>
             </div>
           )}
         </div>
 
-        {/* History */}
-        <div className="page-narrow" style={{ marginTop: 32 }}>
+        <div className="page-narrow" style={{ marginTop: 28 }}>
           <div className="card">
             <div className="card-body" style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', paddingBottom: 16 }}>
               <p className="section-label" style={{ marginBottom: 0 }}>Mes transferts</p>
@@ -731,9 +835,9 @@ export default function HomePage() {
                 {user && user.storage_quota_bytes > 0 && (
                   <QuotaBar used={user.storage_used_bytes} quota={user.storage_quota_bytes} />
                 )}
-              <button className="btn btn-ghost btn-sm" title="Actualiser" onClick={loadHistory}>
-                <RefreshIcon size={14} strokeWidth={2.5} />
-              </button>
+                <button className="btn btn-ghost btn-sm" title="Actualiser" onClick={loadHistory}>
+                  <RefreshIcon size={14} strokeWidth={2.5} />
+                </button>
               </div>
             </div>
 
@@ -784,6 +888,7 @@ export default function HomePage() {
                 const limitReached = !!(t.max_downloads && t.download_count >= t.max_downloads)
                 const canCopy = !t.is_expired && !limitReached
                 const checked = selectedTokens.has(t.token)
+                const sparkBars = generateSparkline(t.token, t.download_count)
 
                 return (
                   <div key={t.token} className={`history-item${checked ? ' selected' : ''}`} data-token={t.token}>
@@ -794,12 +899,28 @@ export default function HomePage() {
                       <div className="history-files">{displayName}</div>
                       {t.name && <div className="history-files" style={{ fontSize: 11, color: 'var(--subtext)', marginTop: 1 }}>{filenames}</div>}
                       <div className="history-meta">
-                        <span>{formatSize(totalSize)}</span>
-                        <span>Créé le {formatDate(new Date(t.created_at))}</span>
+                        <span>{t.files.length} fichier{t.files.length > 1 ? 's' : ''} · {formatSize(totalSize)}</span>
                         <span>{t.is_expired ? 'Expiré le' : 'Expire le'} {formatDate(new Date(t.expires_at))}</span>
-                        {t.has_password && <span>🔒 Protégé</span>}
+                        {t.has_password && <span>🔒</span>}
                       </div>
                     </div>
+
+                    <div className="sparkline" title={`${t.download_count} téléchargement${t.download_count !== 1 ? 's' : ''}`}>
+                      {sparkBars.map((h, i) => (
+                        <div
+                          key={i}
+                          className={`sparkline-bar ${t.is_expired ? 'sparkline-bar--expired' : i === sparkBars.length - 1 ? 'sparkline-bar--last' : 'sparkline-bar--active'}`}
+                          style={{ height: `${h}%` }}
+                        />
+                      ))}
+                    </div>
+
+                    <div className="history-stats">
+                      <span className="history-stat-dl">
+                        {t.max_downloads ? `${t.download_count}/${t.max_downloads}` : `${t.download_count}`} téléch.
+                      </span>
+                    </div>
+
                     <div className="history-right">
                       {confirmToken === t.token ? (
                         <>
@@ -810,13 +931,20 @@ export default function HomePage() {
                       ) : (
                         <>
                           <span className={`history-badge history-badge--${t.is_expired || limitReached ? 'expired' : 'active'}`}>
-                            {t.is_expired ? 'Expiré' : limitReached ? 'Limite atteinte' : 'Actif'}
+                            {t.is_expired ? 'Expiré' : limitReached ? 'Limite' : 'Actif'}
                           </span>
-                          <span className="history-dl">
-                            <DownloadIcon size={12} strokeWidth={2.5} />
-                            {t.max_downloads ? `${t.download_count} / ${t.max_downloads}` : t.download_count}
-                          </span>
-                          {canCopy && <CopyBtn url={t.share_url} />}
+                          {canCopy
+                            ? <CopyBtn url={t.share_url} style="small" />
+                            : (
+                              <button
+                                className="btn btn-outline btn-sm"
+                                style={{ fontSize: 12, padding: '5px 10px' }}
+                                onClick={resetTransfer}
+                              >
+                                ↻ Relancer
+                              </button>
+                            )
+                          }
                           <button className="history-delete" title="Supprimer" onClick={() => setConfirmToken(t.token)}>
                             <TrashIcon size={14} strokeWidth={2} dangerHover />
                           </button>
@@ -831,7 +959,11 @@ export default function HomePage() {
         </div>
       </main>
 
-      {/* Virus warning modal */}
+      <input id="fileInput" type="file" multiple style={{ display: 'none' }}
+        onChange={(e: ChangeEvent<HTMLInputElement>) => {
+          if (e.target.files) { handleNewFiles([...e.target.files]); e.target.value = '' }
+        }} />
+
       {virusWarning && (
         <div className="preview-modal" role="dialog" aria-modal="true">
           <div className="preview-backdrop" />
@@ -863,7 +995,6 @@ export default function HomePage() {
         </div>
       )}
 
-      {/* Preview modal */}
       {previewFile && (
         <div className="preview-modal" role="dialog" aria-modal="true" onKeyDown={e => e.key === 'Escape' && setPreviewFile(null)}>
           <div className="preview-backdrop" onClick={() => setPreviewFile(null)} />
@@ -905,23 +1036,7 @@ function QuotaBar({ used, quota }: { used: number; quota: number }) {
   )
 }
 
-function CopyBox({ text }: { text: string }) {
-  const [copied, setCopied] = useState(false)
-  function copy() {
-    navigator.clipboard.writeText(text).then(() => {
-      setCopied(true)
-      setTimeout(() => setCopied(false), 2000)
-    })
-  }
-  return (
-    <div className="share-box">
-      <span className="share-link">{text}</span>
-      <button className={`copy-btn${copied ? ' copied' : ''}`} onClick={copy}>{copied ? 'Copié' : 'Copier'}</button>
-    </div>
-  )
-}
-
-function CopyBtn({ url }: { url: string }) {
+function CopyBtn({ url, style }: { url: string; style: 'primary' | 'small' }) {
   const [copied, setCopied] = useState(false)
   function copy() {
     navigator.clipboard.writeText(url).then(() => {
@@ -929,7 +1044,8 @@ function CopyBtn({ url }: { url: string }) {
       setTimeout(() => setCopied(false), 2000)
     })
   }
-  return (
-    <button className={`history-copy${copied ? ' copied' : ''}`} onClick={copy}>{copied ? 'Copié' : 'Copier'}</button>
-  )
+  if (style === 'small') {
+    return <button className={`history-copy${copied ? ' copied' : ''}`} onClick={copy}>{copied ? 'Copié' : 'Copier'}</button>
+  }
+  return <button className={`copy-btn${copied ? ' copied' : ''}`} onClick={copy}>{copied ? 'Copié' : 'Copier'}</button>
 }
