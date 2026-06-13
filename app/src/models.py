@@ -130,6 +130,7 @@ class TransferInfo(BaseModel):
     max_downloads: int | None
     has_password: bool
     files: list[FileInfo]
+    sender_username: str | None = None
 
 
 class DownloadUrl(BaseModel):
@@ -149,10 +150,17 @@ class UserTransfer(BaseModel):
     created_at: datetime
     expires_at: datetime
     is_expired: bool
+    is_archived: bool = False
+    is_restoring: bool = False
     download_count: int
     max_downloads: int | None
     has_password: bool
     files: list[FileInfo]
+
+
+class RestoreTransferResponse(BaseModel):
+    ok: bool = True
+    status: str
 
 
 class PatchTransferRequest(BaseModel):
@@ -162,6 +170,28 @@ class PatchTransferRequest(BaseModel):
     max_downloads: int | None = Field(default=None, ge=1)
     remove_max_downloads: bool = Field(default=False)
     name: str | None = Field(default=None, max_length=100)
+
+
+class CreateFileRequestRequest(BaseModel):
+    title: str = Field(max_length=200)
+    message: str | None = Field(default=None)
+    expires_in_hours: int = Field(default=168, ge=1)
+
+
+class FileRequestInfo(BaseModel):
+    token: str
+    title: str
+    message: str | None
+    expires_at: datetime
+    request_url: str
+
+
+class FileRequestPublicInfo(BaseModel):
+    title: str
+    message: str | None
+    expires_at: datetime
+    requester_username: str
+    request_url: str
 
 
 class BatchDeleteRequest(BaseModel):

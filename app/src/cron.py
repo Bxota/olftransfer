@@ -1,7 +1,10 @@
 import logging
 from apscheduler.schedulers.background import BackgroundScheduler
 from .db import get_conn
-from .storage import abort_multipart_upload, delete_objects, write_log_event
+from .storage import (
+    abort_multipart_upload, archive_objects, check_restore_complete,
+    copy_to_standard, delete_objects, write_log_event,
+)
 
 logger = logging.getLogger(__name__)
 scheduler = BackgroundScheduler()
@@ -15,37 +18,100 @@ def cleanup_expired():
         logger.warning(f"Cleanup skipped: {e}")
 
 
+@scheduler.scheduled_job("interval", minutes=30, id="check_restoring")
+def check_restoring():
+    try:
+        _do_check_restoring()
+    except Exception as e:
+        logger.warning(f"Restore check skipped: {e}")
+
+
 def _do_cleanup():
     with get_conn() as conn:
         cur = conn.cursor()
 
+        # Transfers expirés non encore archivés → déplacer en COLD_ARCHIVE
         cur.execute("""
-            SELECT t.token, f.r2_key
+            SELECT t.id, t.token, f.r2_key
             FROM files f
             JOIN transfers t ON f.transfer_id = t.id
-            WHERE t.expires_at < NOW() AND t.files_purged_at IS NULL AND t.confirmed_at IS NOT NULL
+            WHERE t.expires_at < NOW()
+              AND t.archived_at IS NULL
+              AND t.files_purged_at IS NULL
+              AND t.confirmed_at IS NOT NULL
         """)
         rows = cur.fetchall()
-        r2_keys = [row[1] for row in rows]
-        expired_tokens = list({row[0] for row in rows})
+        transfer_ids = list({row[0] for row in rows})
+        r2_keys = [row[2] for row in rows]
+        expired_tokens = list({row[1] for row in rows})
 
-        logger.info(f"Cleanup: found {len(r2_keys)} S3 object(s) to delete")
+        logger.info(f"Cleanup: archiving {len(r2_keys)} S3 object(s) to cold storage")
 
         if r2_keys:
-            delete_objects(r2_keys)
+            try:
+                archive_objects(r2_keys)
+            except Exception as e:
+                logger.warning(f"Cold archive failed: {e}")
+                return
 
-        cur.execute("""
-            UPDATE transfers SET files_purged_at = NOW()
-            WHERE expires_at < NOW() AND files_purged_at IS NULL AND confirmed_at IS NOT NULL
-        """)
-        purged = cur.rowcount
+        if transfer_ids:
+            cur.execute(
+                f"UPDATE transfers SET archived_at = NOW() WHERE id = ANY(%s::uuid[])",
+                (transfer_ids,),
+            )
+        archived = cur.rowcount
 
         for token in expired_tokens:
-            write_log_event("transfer_deleted", token, {"reason": "expired"})
+            write_log_event("transfer_archived", token, {"reason": "expired"})
 
-        logger.info(
-            f"Cleanup: purged {purged} expired transfer(s), {len(r2_keys)} S3 object(s)"
-        )
+        logger.info(f"Cleanup: archived {archived} transfer(s) to cold storage")
+
+def _do_check_restoring():
+    """Vérifie si les restaurations COLD_ARCHIVE sont terminées et remet les fichiers en STANDARD."""
+    with get_conn() as conn:
+        cur = conn.cursor()
+        cur.execute("""
+            SELECT t.id, t.token, f.r2_key
+            FROM files f
+            JOIN transfers t ON f.transfer_id = t.id
+            WHERE t.restore_requested_at IS NOT NULL
+              AND t.archived_at IS NOT NULL
+              AND t.confirmed_at IS NOT NULL
+        """)
+        rows = cur.fetchall()
+        if not rows:
+            return
+
+        by_transfer: dict = {}
+        for t_id, token, key in rows:
+            by_transfer.setdefault(t_id, {"token": token, "keys": []})["keys"].append(key)
+
+        for t_id, info in by_transfer.items():
+            try:
+                all_ready = all(check_restore_complete(k) for k in info["keys"])
+            except Exception as e:
+                logger.warning(f"Restore check for {info['token']}: {e}")
+                continue
+
+            if all_ready:
+                try:
+                    copy_to_standard(info["keys"])
+                except Exception as e:
+                    logger.warning(f"copy_to_standard for {info['token']}: {e}")
+                    continue
+                cur.execute(
+                    """
+                    UPDATE transfers
+                    SET archived_at = NULL,
+                        restore_requested_at = NULL,
+                        expires_at = NOW() + INTERVAL '7 days'
+                    WHERE id = %s
+                    """,
+                    (t_id,),
+                )
+                write_log_event("transfer_restored", info["token"], {})
+                logger.info(f"Restore complete for {info['token']}")
+
 
         # Aborter les uploads multipart orphelins (transfers abandonnés depuis 48h)
         cur.execute("""

@@ -6,6 +6,15 @@
     <meta name="description" content="Envoyez des fichiers facilement et en toute sécurité avec OlfTransfer." />
     <title>OlfTransfer</title>
     <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><rect width='100' height='100' rx='22' fill='%230D9488'/><path d='M50 28 L50 64 M34 44 L50 28 L66 44' stroke='white' stroke-width='8' stroke-linecap='round' stroke-linejoin='round' fill='none'/><rect x='28' y='68' width='44' height='8' rx='4' fill='white'/></svg>" />
+    <link rel="manifest" href="/manifest.webmanifest" />
+    <meta name="theme-color" content="#0D9488" />
+    <meta name="apple-mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-status-bar-style" content="default" />
+    <script>
+      if ('serviceWorker' in navigator) {
+        window.addEventListener('load', () => navigator.serviceWorker.register('/sw.js').catch(() => {}))
+      }
+    </script>
     <link rel="preconnect" href="https://fonts.googleapis.com" />
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
     <link href="https://fonts.googleapis.com/css2?family=Geist:wght@400;500;600;700&display=swap" rel="stylesheet" />

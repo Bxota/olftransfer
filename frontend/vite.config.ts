@@ -16,6 +16,7 @@ export default defineConfig({
       '/uploads': { target: API_TARGET, changeOrigin: true },
       '/admin/': { target: API_TARGET, changeOrigin: true },
       '/health': { target: API_TARGET, changeOrigin: true },
+      '/requests': { target: API_TARGET, changeOrigin: true },
     },
   },
   build: {

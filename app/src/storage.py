@@ -109,13 +109,14 @@ def presigned_upload_url(
     )
 
 
-def presigned_download_url(object_key: str, filename: str, expires: int = 3600) -> str:
+def presigned_download_url(object_key: str, filename: str, expires: int = 3600, inline: bool = False) -> str:
+    disposition = f'inline; filename="{filename}"' if inline else f'attachment; filename="{filename}"'
     return get_presign_client().generate_presigned_url(
         "get_object",
         Params={
             "Bucket": _bucket(),
             "Key": object_key,
-            "ResponseContentDisposition": f'attachment; filename="{filename}"',
+            "ResponseContentDisposition": disposition,
         },
         ExpiresIn=expires,
     )
@@ -185,6 +186,58 @@ def list_upload_parts(object_key: str, upload_id: str) -> list[int]:
 def download_object(object_key: str) -> bytes:
     response = get_client().get_object(Bucket=_bucket(), Key=object_key)
     return response["Body"].read()
+
+
+def archive_objects(object_keys: list[str]) -> None:
+    """Déplace les objets vers la classe COLD_ARCHIVE (OVH / S3 Glacier)."""
+    client = get_client()
+    bucket = _bucket()
+    for key in object_keys:
+        client.copy_object(
+            Bucket=bucket,
+            Key=key,
+            CopySource={"Bucket": bucket, "Key": key},
+            StorageClass="COLD_ARCHIVE",
+            MetadataDirective="COPY",
+        )
+
+
+def restore_objects(object_keys: list[str], days: int = 7) -> None:
+    """Lance la restauration depuis COLD_ARCHIVE vers le stockage chaud."""
+    client = get_client()
+    bucket = _bucket()
+    for key in object_keys:
+        try:
+            client.restore_object(
+                Bucket=bucket,
+                Key=key,
+                RestoreRequest={"Days": days},
+            )
+        except client.exceptions.RestoreAlreadyInProgress:
+            pass
+
+
+def check_restore_complete(object_key: str) -> bool:
+    """Retourne True si la restauration de l'objet est terminée."""
+    client = get_client()
+    head = client.head_object(Bucket=_bucket(), Key=object_key)
+    restore = head.get("Restore", "")
+    # ongoing-request="false" signifie que la restauration est disponible
+    return 'ongoing-request="false"' in restore
+
+
+def copy_to_standard(object_keys: list[str]) -> None:
+    """Recopie les objets restaurés en classe STANDARD (retour du froid)."""
+    client = get_client()
+    bucket = _bucket()
+    for key in object_keys:
+        client.copy_object(
+            Bucket=bucket,
+            Key=key,
+            CopySource={"Bucket": bucket, "Key": key},
+            StorageClass="STANDARD",
+            MetadataDirective="COPY",
+        )
 
 
 def delete_objects(object_keys: list[str]) -> None:

@@ -119,3 +119,48 @@ BEGIN
         ALTER TABLE transfers ADD COLUMN name VARCHAR(100);
     END IF;
 END $$;
+
+-- Demandes de fichiers (reverse transfer)
+CREATE TABLE IF NOT EXISTS file_requests (
+    id          UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    user_id     UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    token       VARCHAR(64) UNIQUE NOT NULL,
+    title       VARCHAR(200) NOT NULL,
+    message     TEXT,
+    expires_at  TIMESTAMP NOT NULL,
+    created_at  TIMESTAMP NOT NULL DEFAULT NOW()
+);
+
+CREATE INDEX IF NOT EXISTS idx_file_requests_token ON file_requests (token);
+
+-- Lien entre file_request et le transfert créé par le déposant
+DO $$
+BEGIN
+    IF NOT EXISTS (
+        SELECT 1 FROM information_schema.columns
+        WHERE table_name = 'transfers' AND column_name = 'file_request_token'
+    ) THEN
+        ALTER TABLE transfers ADD COLUMN file_request_token VARCHAR(64) REFERENCES file_requests(token);
+    END IF;
+END $$;
+
+-- Stockage froid : archived_at = fichiers déplacés en COLD_ARCHIVE, restore_requested_at = restauration demandée
+DO $$
+BEGIN
+    IF NOT EXISTS (
+        SELECT 1 FROM information_schema.columns
+        WHERE table_name = 'transfers' AND column_name = 'archived_at'
+    ) THEN
+        ALTER TABLE transfers ADD COLUMN archived_at TIMESTAMP;
+    END IF;
+END $$;
+
+DO $$
+BEGIN
+    IF NOT EXISTS (
+        SELECT 1 FROM information_schema.columns
+        WHERE table_name = 'transfers' AND column_name = 'restore_requested_at'
+    ) THEN
+        ALTER TABLE transfers ADD COLUMN restore_requested_at TIMESTAMP;
+    END IF;
+END $$;

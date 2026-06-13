@@ -48,6 +48,7 @@ from .models import (
     PatchTransferRequest,
     PendingTransferInfo,
     RegisterRequest,
+    RestoreTransferResponse,
     ResumeTransferResponse,
     ResumeUploadInfo,
     SetQuotaRequest,
@@ -56,10 +57,15 @@ from .models import (
     UploadUrl,
     UserListItem,
     UserTransfer,
+    CreateFileRequestRequest,
+    FileRequestInfo,
+    FileRequestPublicInfo,
 )
 from .storage import (
     abort_multipart_upload,
+    archive_objects,
     complete_multipart_upload,
+    copy_to_standard,
     create_multipart_upload,
     delete_objects,
     get_bucket_stats,
@@ -71,6 +77,7 @@ from .storage import (
     presigned_download_url,
     presigned_upload_part,
     presigned_upload_url,
+    restore_objects,
     write_log_event,
 )
 
@@ -148,7 +155,7 @@ def _download_file_rows(token: str, password: str | None):
         cur = conn.cursor()
         cur.execute(
             """
-            SELECT t.id, t.expires_at, t.password_hash, t.download_count, t.max_downloads, u.email, t.name
+            SELECT t.id, t.expires_at, t.password_hash, t.download_count, t.max_downloads, u.email, t.name, t.archived_at
             FROM transfers t
             JOIN users u ON u.id = t.user_id
             WHERE t.token = %s AND t.confirmed_at IS NOT NULL
@@ -159,7 +166,10 @@ def _download_file_rows(token: str, password: str | None):
         if not row:
             raise HTTPException(status_code=404, detail="Transfer not found")
 
-        transfer_id, expires_at, password_hash, download_count, max_downloads, sender_email, transfer_name = row
+        transfer_id, expires_at, password_hash, download_count, max_downloads, sender_email, transfer_name, archived_at = row
+
+        if archived_at:
+            raise HTTPException(status_code=410, detail="Transfer archived")
 
         if expires_at.replace(tzinfo=timezone.utc) < datetime.now(timezone.utc):
             raise HTTPException(status_code=410, detail="Transfer expired")
@@ -623,7 +633,8 @@ def list_my_transfers(user: dict = Depends(get_current_user)):
         cur.execute(
             """
             SELECT id, token, created_at, expires_at, download_count, max_downloads,
-                   password_hash IS NOT NULL AS has_password, name
+                   password_hash IS NOT NULL AS has_password, name,
+                   archived_at, restore_requested_at
             FROM transfers WHERE user_id = %s AND confirmed_at IS NOT NULL ORDER BY created_at DESC
             """,
             (user["id"],),
@@ -632,7 +643,7 @@ def list_my_transfers(user: dict = Depends(get_current_user)):
 
         result = []
         for t in transfers:
-            t_id, token, created_at, expires_at, dl_count, max_dl, has_pw, name = t
+            t_id, token, created_at, expires_at, dl_count, max_dl, has_pw, name, archived_at, restore_requested_at = t
             cur.execute(
                 "SELECT filename, size_bytes, mime_type FROM files WHERE transfer_id = %s",
                 (t_id,),
@@ -646,6 +657,8 @@ def list_my_transfers(user: dict = Depends(get_current_user)):
                 created_at=created_at,
                 expires_at=expires_at,
                 is_expired=expires_aware < now,
+                is_archived=bool(archived_at),
+                is_restoring=bool(restore_requested_at),
                 download_count=dl_count,
                 max_downloads=max_dl,
                 has_password=has_pw,
@@ -670,6 +683,7 @@ def batch_delete_transfers(payload: BatchDeleteRequest, request: Request, user: 
                 continue
             transfer_id, files_purged_at = row
             if not files_purged_at:
+                # delete_objects fonctionne sur STANDARD et COLD_ARCHIVE
                 cur.execute("SELECT r2_key FROM files WHERE transfer_id = %s", (transfer_id,))
                 r2_keys = [r[0] for r in cur.fetchall()]
                 delete_objects(r2_keys)
@@ -721,23 +735,62 @@ def patch_transfer(token: str, body: PatchTransferRequest, user: dict = Depends(
     return OkResponse()
 
 
-@app.delete("/transfers/{token}", tags=["Transfers"], summary="Supprimer un transfert", status_code=204)
-def delete_transfer(token: str, request: Request, user: dict = Depends(get_current_user)):
+@app.post("/transfers/{token}/restore", tags=["Transfers"], summary="Restaurer un transfert depuis le stockage froid", response_model=RestoreTransferResponse)
+def restore_transfer(token: str, user: dict = Depends(get_current_user)):
     with get_conn() as conn:
         cur = conn.cursor()
         cur.execute(
-            "SELECT id, files_purged_at FROM transfers WHERE token = %s AND user_id = %s AND confirmed_at IS NOT NULL",
+            """
+            SELECT id, archived_at, restore_requested_at
+            FROM transfers
+            WHERE token = %s AND user_id = %s AND confirmed_at IS NOT NULL
+            """,
             (token, user["id"]),
         )
         row = cur.fetchone()
         if not row:
             raise HTTPException(status_code=404, detail="Transfer not found")
 
-        transfer_id, files_purged_at = row
+        transfer_id, archived_at, restore_requested_at = row
+
+        if not archived_at:
+            raise HTTPException(status_code=409, detail="Transfer n'est pas en stockage froid")
+
+        if restore_requested_at:
+            return RestoreTransferResponse(status="restoring")
+
+        cur.execute("SELECT r2_key FROM files WHERE transfer_id = %s", (transfer_id,))
+        r2_keys = [r[0] for r in cur.fetchall()]
+
+        restore_objects(r2_keys)
+
+        cur.execute(
+            "UPDATE transfers SET restore_requested_at = NOW() WHERE id = %s",
+            (transfer_id,),
+        )
+
+    write_log_event("transfer_restore_requested", token, {"user_email": user["email"]})
+    return RestoreTransferResponse(status="restoring")
+
+
+@app.delete("/transfers/{token}", tags=["Transfers"], summary="Supprimer un transfert", status_code=204)
+def delete_transfer(token: str, request: Request, user: dict = Depends(get_current_user)):
+    with get_conn() as conn:
+        cur = conn.cursor()
+        cur.execute(
+            "SELECT id, files_purged_at, archived_at FROM transfers WHERE token = %s AND user_id = %s AND confirmed_at IS NOT NULL",
+            (token, user["id"]),
+        )
+        row = cur.fetchone()
+        if not row:
+            raise HTTPException(status_code=404, detail="Transfer not found")
+
+        transfer_id, files_purged_at, archived_at = row
 
         if not files_purged_at:
             cur.execute("SELECT r2_key FROM files WHERE transfer_id = %s", (transfer_id,))
             r2_keys = [r[0] for r in cur.fetchall()]
+            # delete_objects fonctionne quelle que soit la classe de stockage (STANDARD ou COLD_ARCHIVE)
             delete_objects(r2_keys)
 
         cur.execute("DELETE FROM transfers WHERE id = %s", (transfer_id,))
@@ -836,14 +889,19 @@ def get_transfer(token: str, password: str | None = Query(default=None)):
     with get_conn() as conn:
         cur = conn.cursor()
         cur.execute(
-            "SELECT id, expires_at, download_count, max_downloads, name, password_hash FROM transfers WHERE token = %s AND confirmed_at IS NOT NULL",
+            """
+            SELECT t.id, t.expires_at, t.download_count, t.max_downloads, t.name, t.password_hash, u.email
+            FROM transfers t LEFT JOIN users u ON u.id = t.user_id
+            WHERE t.token = %s AND t.confirmed_at IS NOT NULL
+            """,
             (token,),
         )
         row = cur.fetchone()
         if not row:
             raise HTTPException(status_code=404, detail="Transfer not found")
 
-        transfer_id, expires_at, download_count, max_downloads, name, password_hash = row
+        transfer_id, expires_at, download_count, max_downloads, name, password_hash, sender_email = row
+        sender_username = sender_email.split("@")[0] if sender_email else None
         has_password = bool(password_hash)
 
         if expires_at.replace(tzinfo=timezone.utc) < datetime.now(timezone.utc):
@@ -873,12 +931,13 @@ def get_transfer(token: str, password: str | None = Query(default=None)):
         max_downloads=max_downloads,
         has_password=has_password,
         files=files,
+        sender_username=sender_username,
     )
 
 
 
 @app.get("/transfers/{token}/download", tags=["Transfers"], summary="Obtenir les URLs de téléchargement", response_model=DownloadResponse)
-def download_transfer(token: str, request: Request, password: str | None = Query(default=None, description="Mot de passe si le transfert est protégé"), downloader: dict | None = Depends(get_optional_user)):
+def download_transfer(token: str, request: Request, password: str | None = Query(default=None, description="Mot de passe si le transfert est protégé"), inline: bool = Query(default=False, description="Si True, renvoie des URLs inline (aperçu) au lieu de attachment"), downloader: dict | None = Depends(get_optional_user)):
     rows, sender_email, transfer_name = _download_file_rows(token, password)
 
     file_count = len(rows)
@@ -895,7 +954,7 @@ def download_transfer(token: str, request: Request, password: str | None = Query
     background = BackgroundTask(send_download_notification, sender_email, token, transfer_name, filenames, total_bytes, downloader_email)
     return Response(
         content=DownloadResponse(files=[
-            DownloadUrl(filename=r[0], size_bytes=r[1], download_url=presigned_download_url(r[2], r[0]))
+            DownloadUrl(filename=r[0], size_bytes=r[1], download_url=presigned_download_url(r[2], r[0], inline=inline))
             for r in rows
         ]).model_dump_json(),
         media_type="application/json",
@@ -970,6 +1029,148 @@ def abort_upload(file_id: str, body: AbortUploadRequest, user: dict = Depends(ge
     if not row:
         raise HTTPException(status_code=404)
     abort_multipart_upload(row[0], body.upload_id)
+
+
+# ── File Requests (reverse transfer) ─────────────────────────────────────────
+
+@app.post("/requests", tags=["Requests"], summary="Créer une demande de fichiers", response_model=FileRequestInfo, status_code=201)
+def create_file_request(body: CreateFileRequestRequest, user: dict = Depends(get_current_user)):
+    token = secrets.token_urlsafe(32)
+    expires_at = datetime.now(timezone.utc) + timedelta(hours=body.expires_in_hours)
+    with get_conn() as conn:
+        cur = conn.cursor()
+        cur.execute(
+            "INSERT INTO file_requests (user_id, token, title, message, expires_at) VALUES (%s, %s, %s, %s, %s)",
+            (user["id"], token, body.title, body.message, expires_at),
+        )
+    return FileRequestInfo(
+        token=token,
+        title=body.title,
+        message=body.message,
+        expires_at=expires_at,
+        request_url=f"{BASE_URL}/r/{token}",
+    )
+
+
+@app.get("/requests", tags=["Requests"], summary="Lister mes demandes de fichiers", response_model=list[FileRequestInfo])
+def list_file_requests(user: dict = Depends(get_current_user)):
+    with get_conn() as conn:
+        cur = conn.cursor()
+        cur.execute(
+            "SELECT token, title, message, expires_at FROM file_requests WHERE user_id = %s ORDER BY created_at DESC",
+            (user["id"],),
+        )
+        rows = cur.fetchall()
+    return [FileRequestInfo(token=r[0], title=r[1], message=r[2], expires_at=r[3], request_url=f"{BASE_URL}/r/{r[0]}") for r in rows]
+
+
+@app.get("/requests/{req_token}", tags=["Requests"], summary="Infos publiques d'une demande", response_model=FileRequestPublicInfo)
+def get_file_request(req_token: str):
+    with get_conn() as conn:
+        cur = conn.cursor()
+        cur.execute(
+            """
+            SELECT fr.title, fr.message, fr.expires_at, u.email
+            FROM file_requests fr JOIN users u ON u.id = fr.user_id
+            WHERE fr.token = %s AND fr.expires_at > NOW()
+            """,
+            (req_token,),
+        )
+        row = cur.fetchone()
+    if not row:
+        raise HTTPException(status_code=404, detail="Demande introuvable ou expirée.")
+    title, message, expires_at, email = row
+    return FileRequestPublicInfo(
+        title=title,
+        message=message,
+        expires_at=expires_at,
+        requester_username=email.split("@")[0],
+        request_url=f"{BASE_URL}/r/{req_token}",
+    )
+
+
+@app.delete("/requests/{req_token}", tags=["Requests"], summary="Supprimer une demande", status_code=204)
+def delete_file_request(req_token: str, user: dict = Depends(get_current_user)):
+    with get_conn() as conn:
+        cur = conn.cursor()
+        cur.execute("DELETE FROM file_requests WHERE token = %s AND user_id = %s", (req_token, user["id"]))
+
+
+@app.post("/requests/{req_token}/transfers", tags=["Requests"], summary="Créer un transfert via une demande", response_model=CreateTransferResponse, status_code=201)
+def create_transfer_for_request(req_token: str, body: CreateTransferRequest):
+    with get_conn() as conn:
+        cur = conn.cursor()
+        cur.execute(
+            "SELECT id, user_id FROM file_requests WHERE token = %s AND expires_at > NOW()",
+            (req_token,),
+        )
+        row = cur.fetchone()
+        if not row:
+            raise HTTPException(status_code=404, detail="Demande introuvable ou expirée.")
+        _request_id, owner_user_id = row
+
+        cur.execute("SELECT storage_quota_bytes FROM users WHERE id = %s", (owner_user_id,))
+        quota_row = cur.fetchone()
+        owner_quota = quota_row[0] if quota_row else 10737418240
+
+        cur.execute(
+            """
+            SELECT COALESCE(SUM(f.size_bytes), 0) FROM files f
+            JOIN transfers t ON f.transfer_id = t.id
+            WHERE t.user_id = %s AND t.confirmed_at IS NOT NULL AND t.files_purged_at IS NULL
+            """,
+            (owner_user_id,),
+        )
+        used_bytes = int(cur.fetchone()[0])
+        requested_bytes = sum(f.size_bytes for f in body.files)
+        if used_bytes + requested_bytes > owner_quota:
+            raise HTTPException(status_code=507, detail="L'espace de stockage du destinataire est plein.")
+
+        token = secrets.token_urlsafe(32)
+        expires_at = datetime.now(timezone.utc) + timedelta(hours=168)
+
+        cur.execute(
+            """
+            INSERT INTO transfers (user_id, token, expires_at, file_request_token)
+            VALUES (%s, %s, %s, %s) RETURNING id
+            """,
+            (owner_user_id, token, expires_at, req_token),
+        )
+        transfer_id = cur.fetchone()[0]
+
+        uploads = []
+        for f in body.files:
+            r2_key = f"{transfer_id}/{secrets.token_hex(8)}_{f.filename}"
+            mp_upload_id = create_multipart_upload(r2_key, f.mime_type) if f.size_bytes >= MULTIPART_THRESHOLD else None
+            cur.execute(
+                """
+                INSERT INTO files (transfer_id, filename, size_bytes, mime_type, r2_key, multipart_upload_id)
+                VALUES (%s, %s, %s, %s, %s, %s) RETURNING id
+                """,
+                (transfer_id, f.filename, f.size_bytes, f.mime_type, r2_key, mp_upload_id),
+            )
+            file_id = cur.fetchone()[0]
+            if mp_upload_id:
+                uploads.append(UploadUrl(file_id=str(file_id), filename=f.filename, multipart_upload_id=mp_upload_id))
+            else:
+                uploads.append(UploadUrl(file_id=str(file_id), filename=f.filename, upload_url=presigned_upload_url(r2_key, f.mime_type)))
+
+    return CreateTransferResponse(token=token, share_url=f"{BASE_URL}/t/{token}", expires_at=expires_at, uploads=uploads)
+
+
+@app.post("/requests/{req_token}/transfers/{transfer_token}/confirm", tags=["Requests"], summary="Confirmer un dépôt via demande")
+def confirm_transfer_for_request(req_token: str, transfer_token: str):
+    with get_conn() as conn:
+        cur = conn.cursor()
+        cur.execute(
+            "SELECT id FROM transfers WHERE token = %s AND file_request_token = %s AND confirmed_at IS NULL",
+            (transfer_token, req_token),
+        )
+        row = cur.fetchone()
+        if not row:
+            raise HTTPException(status_code=404, detail="Transfert introuvable.")
+        cur.execute("UPDATE transfers SET confirmed_at = NOW() WHERE id = %s", (row[0],))
+    return {"ok": True}
 
 
 # ── SPA fallback (must be last) ───────────────────────────────────────────────

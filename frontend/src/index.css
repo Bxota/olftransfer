@@ -173,6 +173,24 @@ body {
 .field { display: flex; flex-direction: column; gap: 6px; }
 .field label { font-size: 12px; font-weight: 500; color: var(--subtext); }
 
+.field textarea {
+  padding: 9px 12px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  font-size: 14px;
+  outline: none;
+  background: white;
+  color: var(--text);
+  transition: border-color .15s, box-shadow .15s;
+  font-family: inherit;
+  width: 100%;
+  display: block;
+}
+.field textarea:focus {
+  border-color: var(--primary);
+  box-shadow: 0 0 0 3px rgba(13,148,136,.1);
+}
+
 .field input, .field select {
   padding: 9px 12px;
   border: 1px solid var(--border);
@@ -394,11 +412,12 @@ body {
 .history-copy.copied { background: var(--success); }
 
 .history-delete {
-  flex-shrink: 0; padding: 5px 7px;
-  border-radius: 7px;
+  flex-shrink: 0;
+  width: 34px; height: 34px;
+  border-radius: 8px;
   background: transparent; color: var(--subtext);
   border: 1px solid var(--border); cursor: pointer;
-  display: flex; align-items: center;
+  display: flex; align-items: center; justify-content: center;
   transition: background .15s, color .15s, border-color .15s;
 }
 .history-delete:hover { background: #FEF2F2; color: #991B1B; border-color: #FECACA; }
@@ -662,6 +681,154 @@ body {
   background: var(--primary); color: white;
   display: flex; align-items: center; justify-content: center;
   font-size: 11px; font-weight: 700; flex-shrink: 0;
+}
+
+/* ── Mode toggle (Envoyer / Recevoir) ── */
+.mode-toggle {
+  display: flex; background: var(--bg); border: 1.5px solid var(--border);
+  border-radius: 10px; padding: 3px; gap: 2px; margin-bottom: 20px;
+}
+.mode-toggle-btn {
+  flex: 1; padding: 7px 12px; border: none; border-radius: 7px;
+  font-size: 13px; font-weight: 500; cursor: pointer; transition: all .15s;
+  background: transparent; color: var(--subtext);
+}
+.mode-toggle-btn.active {
+  background: var(--primary); color: white; font-weight: 600;
+  box-shadow: 0 1px 4px rgba(13,148,136,.25);
+}
+
+/* ── QR popover ── */
+.qr-btn {
+  width: 38px; height: 38px; border-radius: 9px;
+  border: 1.5px solid #c7ece6; background: var(--primary-light);
+  color: var(--primary); cursor: pointer; display: flex; align-items: center;
+  justify-content: center; transition: all .15s; flex-shrink: 0;
+  overflow: visible;
+}
+.qr-btn:hover { background: #d4f5f0; border-color: var(--primary); }
+.qr-popover {
+  background: white; border: 1px solid var(--border); border-radius: 14px;
+  padding: 16px; box-shadow: 0 8px 32px rgba(0,0,0,.15);
+  text-align: center; width: 208px;
+}
+.qr-popover-title {
+  font-size: 13px; font-weight: 600; margin-bottom: 12px; color: var(--text);
+}
+.qr-code-wrap {
+  display: flex; justify-content: center; margin-bottom: 10px;
+  padding: 6px; border: 1px solid var(--border); border-radius: 8px;
+}
+.qr-popover-hint {
+  font-size: 11.5px; color: var(--subtext); line-height: 1.4;
+}
+
+/* ── History v2 ── */
+.history-header {
+  display: flex; align-items: center; justify-content: space-between;
+  padding: 16px 20px 14px;
+}
+.history-title { font-size: 16px; font-weight: 700; color: var(--text); }
+
+.history-search-bar {
+  display: flex; align-items: center; gap: 8px;
+  margin: 0 20px 12px;
+  background: var(--bg); border: 1px solid var(--border);
+  border-radius: 9px; padding: 8px 12px;
+}
+.history-search-bar input {
+  flex: 1; border: none; background: transparent; outline: none;
+  font-size: 13px; color: var(--text); font-family: inherit;
+}
+.history-search-bar input::placeholder { color: #9aa0aa; }
+
+.history-group-header {
+  display: flex; align-items: center; gap: 6px;
+  padding: 6px 20px 6px;
+  font-size: 11px; font-weight: 600; letter-spacing: .6px;
+  text-transform: uppercase; color: #0F766E;
+  border-top: 1px solid var(--border);
+}
+.history-group-count {
+  display: inline-flex; align-items: center; justify-content: center;
+  background: #E6F4F2; color: #0F766E;
+  font-size: 10px; font-weight: 700;
+  padding: 1px 6px; border-radius: 99px; letter-spacing: 0;
+}
+
+.history-item {
+  display: flex; align-items: center; gap: 10px;
+  padding: 11px 20px;
+  border-top: 1px solid var(--border);
+  transition: background .1s;
+}
+.history-item.selected { background: #F5F7FF; }
+.history-item--archived { opacity: 0.8; }
+
+.history-status-dot {
+  width: 9px; height: 9px; border-radius: 50%; flex-shrink: 0;
+}
+
+.history-name-col { flex: 1; min-width: 0; }
+.history-name-text {
+  font-size: 14px; font-weight: 500;
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+  color: var(--text);
+}
+.history-name-text--archived { color: var(--subtext); }
+.history-name-meta {
+  font-size: 11px; color: #9aa0aa; margin-top: 2px;
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+
+.history-dl-col {
+  width: 58px; flex-shrink: 0; text-align: right;
+}
+.history-dl-count { font-size: 13px; font-weight: 600; color: var(--primary); }
+.history-dl-count--archived { color: #9aa0aa; }
+.history-dl-label { font-size: 11px; color: #9aa0aa; }
+
+.history-icon-btn {
+  width: 34px; height: 34px; flex-shrink: 0;
+  display: flex; align-items: center; justify-content: center;
+  border-radius: 8px; border: 1px solid var(--border);
+  background: white; color: var(--primary);
+  cursor: pointer; transition: all .15s;
+}
+.history-icon-btn:hover { background: var(--primary-light); border-color: #c7ece6; }
+.history-icon-btn:active { transform: scale(0.95); }
+.history-icon-btn.copied { background: var(--success); color: white; border-color: var(--success); }
+.history-icon-btn--restore { color: var(--primary); }
+.history-icon-btn--restore:hover { background: var(--primary-light); }
+.history-icon-btn--restore:disabled { opacity: 0.5; cursor: not-allowed; }
+
+.archive-toggle {
+  display: flex; align-items: center; gap: 8px;
+  width: 100%; padding: 12px 20px;
+  border: none; border-top: 1px solid var(--border);
+  background: transparent; cursor: pointer;
+  font-size: 13px; font-weight: 500; color: var(--subtext);
+  text-align: left; transition: background .1s;
+}
+.archive-toggle:hover { background: var(--bg); }
+.archive-toggle-chevron {
+  margin-left: auto; flex-shrink: 0;
+  transition: transform .2s;
+}
+.archive-toggle-chevron--open { transform: rotate(180deg); }
+
+.archive-footer {
+  padding: 10px 20px 12px;
+  font-size: 11.5px; color: #9aa0aa;
+  border-top: 1px solid var(--border);
+  text-align: center;
+}
+
+.restoring-badge {
+  font-size: 11px; font-weight: 500; color: #F59E0B;
+  white-space: nowrap; padding: 4px 8px;
+  background: #FFFBEB; border: 1px solid #FDE68A;
+  border-radius: 6px;
 }
 
 /* ── Utils ── */

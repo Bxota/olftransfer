@@ -1,11 +1,14 @@
-import { ChangeEvent, DragEvent, useEffect, useRef, useState } from 'react'
+import { ChangeEvent, DragEvent, MouseEvent, useEffect, useRef, useState } from 'react'
 import { Link, useNavigate } from 'react-router-dom'
 import { useAuth } from '../App'
+import { QrPopover } from '../components/QrPopover'
+import ReceivePage from './ReceivePage'
 import UploadIcon from '../icons/upload-icon'
 import CameraIcon from '../icons/camera-icon'
 import BrandZoomIcon from '../icons/brand-zoom-icon'
 import FileDescriptionIcon from '../icons/file-description-icon'
 import CodeIcon from '../icons/code-icon'
+import CopyIcon from '../icons/copy-icon'
 import DownloadIcon from '../icons/download-icon'
 import TrashIcon from '../icons/trash-icon'
 import RefreshIcon from '../icons/refresh-icon'
@@ -17,7 +20,8 @@ import { formatBytes, formatSize, formatDate, getExt, getStem, getFileCategory, 
 interface TransferFile { filename: string; size_bytes: number; mime_type: string }
 interface HistoryTransfer {
   token: string; name: string | null; share_url: string; created_at: string; expires_at: string
-  is_expired: boolean; download_count: number; max_downloads: number | null
+  is_expired: boolean; is_archived: boolean; is_restoring: boolean
+  download_count: number; max_downloads: number | null
   has_password: boolean; files: TransferFile[]
 }
 interface FileProgress { pct: number; done: boolean }
@@ -203,6 +207,8 @@ export default function HomePage() {
   // History
   const [history, setHistory] = useState<HistoryTransfer[]>([])
   const [selectedTokens, setSelectedTokens] = useState<Set<string>>(new Set())
+  const [historySearch, setHistorySearch] = useState('')
+  const [archiveOpen, setArchiveOpen] = useState(false)
 
   // Preview modal
   const [previewFile, setPreviewFile] = useState<File | null>(null)
@@ -572,6 +578,13 @@ export default function HomePage() {
     setSelectedTokens(checked ? new Set(history.map(t => t.token)) : new Set())
   }
 
+  async function restoreTransfer(token: string) {
+    const res = await fetch(`/transfers/${token}/restore`, { method: 'POST' })
+    if (res.ok) {
+      setHistory(h => h.map(t => t.token === token ? { ...t, is_restoring: true } : t))
+    }
+  }
+
   async function handleLogout() {
     await fetch('/auth/logout', { method: 'POST' })
     setUser(null)
@@ -590,6 +603,8 @@ export default function HomePage() {
 
   const hasFiles = files.length > 0
   const allDone = hasFiles && Object.keys(progress).length === files.length && Object.values(progress).every(p => p.done)
+
+  const [mode, setMode] = useState<'send' | 'receive'>('send')
 
   return (
     <>
@@ -669,7 +684,24 @@ export default function HomePage() {
             Glissez des fichiers n'importe où sur la page
           </div>
 
-          {!hasFiles && (
+          <div className="mode-toggle">
+            <button className={`mode-toggle-btn${mode === 'send' ? ' active' : ''}`} onClick={() => setMode('send')}>
+              <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" style={{ marginRight: 6, verticalAlign: 'middle' }}>
+                <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" /><polyline points="17 8 12 3 7 8" /><line x1="12" y1="3" x2="12" y2="15" />
+              </svg>
+              Envoyer
+            </button>
+            <button className={`mode-toggle-btn${mode === 'receive' ? ' active' : ''}`} onClick={() => setMode('receive')}>
+              <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" style={{ marginRight: 6, verticalAlign: 'middle' }}>
+                <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" /><polyline points="7 10 12 15 17 10" /><line x1="12" y1="15" x2="12" y2="3" />
+              </svg>
+              Recevoir
+            </button>
+          </div>
+
+          {mode === 'receive' && <ReceivePage />}
+
+          {mode === 'send' && !hasFiles && (
             <div className="card">
               <div className="card-body">
                 <div
@@ -693,7 +725,7 @@ export default function HomePage() {
             </div>
           )}
 
-          {hasFiles && (
+          {mode === 'send' && hasFiles && (
             <div className="card share-card">
               <div className="share-card-header">
                 <div className="share-card-status">
@@ -716,6 +748,7 @@ export default function HomePage() {
                     {shareLink || 'Génération du lien…'}
                   </span>
                   {shareLink && <CopyBtn url={shareLink} style="primary" />}
+                  {shareLink && <QrPopover url={shareLink} />}
                 </div>
 
                 <ul className="file-list">
@@ -829,9 +862,10 @@ export default function HomePage() {
 
         <div className="page-narrow" style={{ marginTop: 28 }}>
           <div className="card">
-            <div className="card-body" style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', paddingBottom: 16 }}>
-              <p className="section-label" style={{ marginBottom: 0 }}>Mes transferts</p>
-              <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
+            {/* En-tête : titre + QuotaBar dégradée */}
+            <div className="history-header">
+              <span className="history-title">Mes transferts</span>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
                 {user && user.storage_quota_bytes > 0 && (
                   <QuotaBar used={user.storage_used_bytes} quota={user.storage_quota_bytes} />
                 )}
@@ -841,6 +875,19 @@ export default function HomePage() {
               </div>
             </div>
 
+            {/* Barre de recherche */}
+            <div className="history-search-bar">
+              <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="#9aa0aa" strokeWidth="2.5">
+                <circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/>
+              </svg>
+              <input
+                placeholder="Rechercher un transfert…"
+                value={historySearch}
+                onChange={e => setHistorySearch(e.target.value)}
+              />
+            </div>
+
+            {/* Barre d'actions groupées */}
             {selectedTokens.size > 0 && (
               <div id="bulkBar">
                 {bulkConfirm ? (
@@ -873,88 +920,150 @@ export default function HomePage() {
               </div>
             )}
             {deleteError && (
-              <div className="alert alert-error" style={{ margin: '0 28px 12px' }}>{deleteError}</div>
+              <div className="alert alert-error" style={{ margin: '0 20px 10px' }}>{deleteError}</div>
             )}
 
-            <div>
-              {history.length === 0 ? (
-                <div className="card-body" style={{ paddingTop: 0, color: 'var(--subtext)', fontSize: 13, textAlign: 'center' }}>
-                  Aucun transfert pour le moment.
-                </div>
-              ) : history.map(t => {
-                const filenames = t.files.map(f => f.filename).join(', ')
-                const displayName = t.name || filenames
-                const totalSize = t.files.reduce((s, f) => s + f.size_bytes, 0)
-                const limitReached = !!(t.max_downloads && t.download_count >= t.max_downloads)
-                const canCopy = !t.is_expired && !limitReached
-                const checked = selectedTokens.has(t.token)
-                const sparkBars = generateSparkline(t.token, t.download_count)
+            {history.length === 0 && (
+              <div style={{ padding: '20px', color: 'var(--subtext)', fontSize: 13, textAlign: 'center' }}>
+                Aucun transfert pour le moment.
+              </div>
+            )}
 
-                return (
-                  <div key={t.token} className={`history-item${checked ? ' selected' : ''}`} data-token={t.token}>
-                    <label className="history-chk-wrap">
-                      <input type="checkbox" className="history-chk" checked={checked} onChange={e => toggleToken(t.token, e.target.checked)} />
-                    </label>
-                    <div className="history-main">
-                      <div className="history-files">{displayName}</div>
-                      {t.name && <div className="history-files" style={{ fontSize: 11, color: 'var(--subtext)', marginTop: 1 }}>{filenames}</div>}
-                      <div className="history-meta">
-                        <span>{t.files.length} fichier{t.files.length > 1 ? 's' : ''} · {formatSize(totalSize)}</span>
-                        <span>{t.is_expired ? 'Expiré le' : 'Expire le'} {formatDate(new Date(t.expires_at))}</span>
-                        {t.has_password && <span>🔒</span>}
+            {/* Groupe Actifs */}
+            {(() => {
+              const search = historySearch.toLowerCase()
+              const active = history.filter(t => !t.is_archived && !t.is_restoring && !t.is_expired).filter(t => {
+                if (!search) return true
+                const displayName = t.name || t.files.map(f => f.filename).join(', ')
+                return displayName.toLowerCase().includes(search)
+              })
+              const archived = history.filter(t => t.is_archived || t.is_restoring || t.is_expired).filter(t => {
+                if (!search) return true
+                const displayName = t.name || t.files.map(f => f.filename).join(', ')
+                return displayName.toLowerCase().includes(search)
+              })
+
+              const now = Date.now()
+
+              return (
+                <>
+                  {active.length > 0 && (
+                    <>
+                      <div className="history-group-header">
+                        Actifs <span className="history-group-count">{active.length}</span>
                       </div>
-                    </div>
+                      {active.map(t => {
+                        const filenames = t.files.map(f => f.filename).join(', ')
+                        const displayName = t.name || filenames
+                        const totalSize = t.files.reduce((s, f) => s + f.size_bytes, 0)
+                        const expiresAt = new Date(t.expires_at).getTime()
+                        const msTilExpiry = expiresAt - now
+                        const soonExpiring = msTilExpiry < 48 * 3600 * 1000
+                        const daysLeft = Math.max(0, Math.ceil(msTilExpiry / (3600 * 1000 * 24)))
+                        const checked = selectedTokens.has(t.token)
+                        return (
+                          <div key={t.token} className={`history-item${checked ? ' selected' : ''}`}>
+                            <label className="history-chk-wrap">
+                              <input type="checkbox" className="history-chk" checked={checked} onChange={e => toggleToken(t.token, e.target.checked)} />
+                            </label>
+                            <div className="history-status-dot" style={{ background: soonExpiring ? '#F59E0B' : '#10B981' }} />
+                            <div className="history-name-col" title={displayName}>
+                              <div className="history-name-text">{displayName}</div>
+                              <div className="history-name-meta">
+                                {t.files.length} fichier{t.files.length > 1 ? 's' : ''} · {formatSize(totalSize)} · {daysLeft} j restants
+                              </div>
+                            </div>
+                            <div className="history-dl-col">
+                              <div className="history-dl-count">{t.max_downloads ? `${t.download_count}/${t.max_downloads}` : t.download_count}</div>
+                              <div className="history-dl-label">téléch.</div>
+                            </div>
+                            {confirmToken === t.token ? (
+                              <>
+                                <span style={{ fontSize: 12, color: '#991B1B', fontWeight: 500, whiteSpace: 'nowrap' }}>Supprimer ?</span>
+                                <button className="btn btn-ghost btn-sm" onClick={() => setConfirmToken(null)}>Non</button>
+                                <button className="bulk-delete-btn" onClick={() => confirmDeleteTransfer(t.token)}>Oui</button>
+                              </>
+                            ) : (
+                              <>
+                                <CopyIconBtn url={t.share_url} />
+                                <button className="history-delete" title="Supprimer" onClick={() => setConfirmToken(t.token)}>
+                                  <TrashIcon size={14} strokeWidth={2} dangerHover />
+                                </button>
+                              </>
+                            )}
+                          </div>
+                        )
+                      })}
+                    </>
+                  )}
 
-                    <div className="sparkline" title={`${t.download_count} téléchargement${t.download_count !== 1 ? 's' : ''}`}>
-                      {sparkBars.map((h, i) => (
-                        <div
-                          key={i}
-                          className={`sparkline-bar ${t.is_expired ? 'sparkline-bar--expired' : i === sparkBars.length - 1 ? 'sparkline-bar--last' : 'sparkline-bar--active'}`}
-                          style={{ height: `${h}%` }}
-                        />
-                      ))}
-                    </div>
+                  {archived.length > 0 && (
+                    <>
+                      <button className="archive-toggle" onClick={() => setArchiveOpen(o => !o)}>
+                        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                          <polyline points="21 8 21 21 3 21 3 8"/><rect x="1" y="3" width="22" height="5"/><line x1="10" y1="12" x2="14" y2="12"/>
+                        </svg>
+                        Archive — {archived.length} transfert{archived.length > 1 ? 's' : ''} expiré{archived.length > 1 ? 's' : ''}
+                        <svg className={`archive-toggle-chevron${archiveOpen ? ' archive-toggle-chevron--open' : ''}`} width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5">
+                          <polyline points="6 9 12 15 18 9"/>
+                        </svg>
+                      </button>
 
-                    <div className="history-stats">
-                      <span className="history-stat-dl">
-                        {t.max_downloads ? `${t.download_count}/${t.max_downloads}` : `${t.download_count}`} téléch.
-                      </span>
-                    </div>
-
-                    <div className="history-right">
-                      {confirmToken === t.token ? (
+                      {archiveOpen && (
                         <>
-                          <span style={{ fontSize: 12, color: '#991B1B', fontWeight: 500, whiteSpace: 'nowrap' }}>Supprimer ?</span>
-                          <button className="btn btn-ghost btn-sm" onClick={() => setConfirmToken(null)}>Non</button>
-                          <button className="bulk-delete-btn" onClick={() => confirmDeleteTransfer(t.token)}>Oui</button>
-                        </>
-                      ) : (
-                        <>
-                          <span className={`history-badge history-badge--${t.is_expired || limitReached ? 'expired' : 'active'}`}>
-                            {t.is_expired ? 'Expiré' : limitReached ? 'Limite' : 'Actif'}
-                          </span>
-                          {canCopy
-                            ? <CopyBtn url={t.share_url} style="small" />
-                            : (
-                              <button
-                                className="btn btn-outline btn-sm"
-                                style={{ fontSize: 12, padding: '5px 10px' }}
-                                onClick={resetTransfer}
-                              >
-                                ↻ Relancer
-                              </button>
+                          {archived.map(t => {
+                            const filenames = t.files.map(f => f.filename).join(', ')
+                            const displayName = t.name || filenames
+                            const totalSize = t.files.reduce((s, f) => s + f.size_bytes, 0)
+                            const checked = selectedTokens.has(t.token)
+                            return (
+                              <div key={t.token} className={`history-item history-item--archived${checked ? ' selected' : ''}`}>
+                                <label className="history-chk-wrap">
+                                  <input type="checkbox" className="history-chk" checked={checked} onChange={e => toggleToken(t.token, e.target.checked)} />
+                                </label>
+                                <div className="history-status-dot" style={{ background: '#d3d6db' }} />
+                                <div className="history-name-col" title={displayName}>
+                                  <div className="history-name-text history-name-text--archived">{displayName}</div>
+                                  <div className="history-name-meta">
+                                    {t.files.length} fichier{t.files.length > 1 ? 's' : ''} · {formatSize(totalSize)} · Expiré le {formatDate(new Date(t.expires_at))}
+                                  </div>
+                                </div>
+                                <div className="history-dl-col">
+                                  <div className="history-dl-count history-dl-count--archived">{t.download_count}</div>
+                                  <div className="history-dl-label">téléch.</div>
+                                </div>
+                                {confirmToken === t.token ? (
+                                  <>
+                                    <span style={{ fontSize: 12, color: '#991B1B', fontWeight: 500, whiteSpace: 'nowrap' }}>Supprimer ?</span>
+                                    <button className="btn btn-ghost btn-sm" onClick={() => setConfirmToken(null)}>Non</button>
+                                    <button className="bulk-delete-btn" onClick={() => confirmDeleteTransfer(t.token)}>Oui</button>
+                                  </>
+                                ) : t.is_restoring ? (
+                                  <>
+                                    <span className="restoring-badge">En cours…</span>
+                                    <button className="history-delete" title="Supprimer" onClick={() => setConfirmToken(t.token)}>
+                                      <TrashIcon size={14} strokeWidth={2} dangerHover />
+                                    </button>
+                                  </>
+                                ) : (
+                                  <>
+                                    <RestoreIconBtn onClick={() => restoreTransfer(t.token)} />
+                                    <button className="history-delete" title="Supprimer" onClick={() => setConfirmToken(t.token)}>
+                                      <TrashIcon size={14} strokeWidth={2} dangerHover />
+                                    </button>
+                                  </>
+                                )}
+                              </div>
                             )
-                          }
-                          <button className="history-delete" title="Supprimer" onClick={() => setConfirmToken(t.token)}>
-                            <TrashIcon size={14} strokeWidth={2} dangerHover />
-                          </button>
+                          })}
+                          <div className="archive-footer">❄ Conservés en stockage froid — Relancer les remet en ligne</div>
                         </>
                       )}
-                    </div>
-                  </div>
-                )
-              })}
-            </div>
+                    </>
+                  )}
+                </>
+              )
+            })()}
           </div>
         </div>
       </main>
@@ -1025,12 +1134,16 @@ export default function HomePage() {
 
 function QuotaBar({ used, quota }: { used: number; quota: number }) {
   const pct = Math.min(100, Math.round(used / quota * 100))
-  const color = pct >= 90 ? '#EF4444' : pct >= 70 ? '#F59E0B' : 'var(--success)'
+  const usedStr = formatBytes(used)
+  const quotaStr = formatBytes(quota)
   return (
     <div style={{ textAlign: 'right' }}>
-      <div style={{ fontSize: 11, color: 'var(--subtext)', marginBottom: 3 }}>{formatBytes(used)} / {formatBytes(quota)}</div>
-      <div style={{ width: 110, height: 4, background: 'var(--border)', borderRadius: 2, overflow: 'hidden' }}>
-        <div style={{ width: `${pct}%`, height: '100%', background: color, borderRadius: 2 }} />
+      <div style={{ fontSize: 11, color: 'var(--subtext)', marginBottom: 4, display: 'flex', gap: 6, justifyContent: 'flex-end' }}>
+        <span>Espace utilisé</span>
+        <span style={{ fontFamily: "'Geist Mono', monospace", color: 'var(--text)', fontWeight: 500 }}>{usedStr} / {quotaStr}</span>
+      </div>
+      <div style={{ width: 190, height: 6, background: '#EEF0F2', borderRadius: 3, overflow: 'hidden' }}>
+        <div style={{ width: `${pct}%`, height: '100%', background: 'linear-gradient(90deg, #0D9488, #10B981)', borderRadius: 3 }} />
       </div>
     </div>
   )
@@ -1048,4 +1161,34 @@ function CopyBtn({ url, style }: { url: string; style: 'primary' | 'small' }) {
     return <button className={`history-copy${copied ? ' copied' : ''}`} onClick={copy}>{copied ? 'Copié' : 'Copier'}</button>
   }
   return <button className={`copy-btn${copied ? ' copied' : ''}`} onClick={copy}>{copied ? 'Copié' : 'Copier'}</button>
+}
+
+function CopyIconBtn({ url }: { url: string }) {
+  const [copied, setCopied] = useState(false)
+  function copy(e: MouseEvent) {
+    e.stopPropagation()
+    navigator.clipboard.writeText(url).then(() => {
+      setCopied(true)
+      setTimeout(() => setCopied(false), 2000)
+    })
+  }
+  return (
+    <button className={`history-icon-btn${copied ? ' copied' : ''}`} title={copied ? 'Copié !' : 'Copier le lien'} onClick={copy}>
+      {copied ? (
+        <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5"><polyline points="20 6 9 17 4 12"/></svg>
+      ) : (
+        <CopyIcon size={14} strokeWidth={2} />
+      )}
+    </button>
+  )
+}
+
+function RestoreIconBtn({ onClick, disabled }: { onClick: () => void; disabled?: boolean }) {
+  return (
+    <button className="history-icon-btn history-icon-btn--restore" title="Relancer" onClick={onClick} disabled={disabled}>
+      <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+        <polyline points="1 4 1 10 7 10"/><path d="M3.51 15a9 9 0 1 0 .49-4.97"/>
+      </svg>
+    </button>
+  )
 }

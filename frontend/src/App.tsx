@@ -5,6 +5,7 @@ import RegisterPage from './pages/RegisterPage'
 import HomePage from './pages/HomePage'
 import TransferPage from './pages/TransferPage'
 import AdminPage from './pages/AdminPage'
+import RequestDropPage from './pages/RequestDropPage'
 
 export interface User {
   email: string
@@ -72,6 +73,7 @@ export default function App() {
           <Route path="/login" element={<LoginPage />} />
           <Route path="/register" element={<RegisterPage />} />
           <Route path="/t/:token" element={<TransferPage />} />
+          <Route path="/r/:token" element={<RequestDropPage />} />
           <Route
             path="/"
             element={

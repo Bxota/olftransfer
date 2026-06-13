@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from 'react'
 import { Link, useParams } from 'react-router-dom'
 import { formatSize, formatDateLong } from '../lib/utils'
+import { QrPopover } from '../components/QrPopover'
 
 interface TransferFile {
   filename: string
@@ -25,6 +26,31 @@ function getExpiryDays(expiresAt: string): number {
   return Math.max(0, Math.ceil(diff / (1000 * 60 * 60 * 24)))
 }
 
+function getFileExt(filename: string): string {
+  const i = filename.lastIndexOf('.')
+  return i > 0 ? filename.slice(i + 1).toUpperCase() : '—'
+}
+
+function isImageFile(filename: string): boolean {
+  return /\.(jpe?g|png|gif|webp|svg|avif|heic)$/i.test(filename)
+}
+
+function isVideoFile(filename: string): boolean {
+  return /\.(mp4|webm|mov|mkv|avi)$/i.test(filename)
+}
+
+function isAudioFile(filename: string): boolean {
+  return /\.(mp3|wav|ogg|flac|aac|m4a)$/i.test(filename)
+}
+
+function isPdfFile(filename: string): boolean {
+  return /\.pdf$/i.test(filename)
+}
+
+function isPreviewable(filename: string): boolean {
+  return isImageFile(filename) || isVideoFile(filename) || isAudioFile(filename) || isPdfFile(filename)
+}
+
 export default function TransferPage() {
   const { token } = useParams<{ token: string }>()
   const [state, setState] = useState<PageState>('loading')
@@ -36,7 +62,21 @@ export default function TransferPage() {
   const [pwError, setPwError] = useState('')
   const passwordRef = useRef<string | null>(null)
 
+  // Preview modal
+  const [previewUrl, setPreviewUrl] = useState<string | null>(null)
+  const [previewFilename, setPreviewFilename] = useState<string | null>(null)
+  const [previewLoading, setPreviewLoading] = useState<number | null>(null)
+
   useEffect(() => { loadTransfer() }, [token])
+
+  useEffect(() => {
+    if (!previewUrl) return
+    function onKey(e: KeyboardEvent) { if (e.key === 'Escape') closePreview() }
+    document.addEventListener('keydown', onKey)
+    return () => document.removeEventListener('keydown', onKey)
+  }, [previewUrl])
+
+  function closePreview() { setPreviewUrl(null); setPreviewFilename(null) }
 
   async function loadTransfer() {
     try {
@@ -44,7 +84,7 @@ export default function TransferPage() {
       if (res.status === 404 || res.status === 410) {
         const data = await res.json()
         setIsExpired(res.status === 410)
-        setErrorTitle(res.status === 410 ? 'Transfert expiré' : 'Transfert introuvable')
+        setErrorTitle(res.status === 410 ? 'Ce lien a expiré' : 'Transfert introuvable')
         setErrorMsg(data.detail)
         setState('error')
         return
@@ -60,8 +100,11 @@ export default function TransferPage() {
     }
   }
 
-  async function getDownloadUrls(): Promise<{ filename: string; download_url: string }[] | null> {
-    const params = passwordRef.current ? `?password=${encodeURIComponent(passwordRef.current)}` : ''
+  async function getDownloadUrls(inline = false): Promise<{ filename: string; download_url: string }[] | null> {
+    const p = new URLSearchParams()
+    if (passwordRef.current) p.set('password', passwordRef.current)
+    if (inline) p.set('inline', 'true')
+    const params = p.toString() ? `?${p.toString()}` : ''
     const res = await fetch(`/transfers/${token}/download${params}`)
     if (res.status === 401) { setState('password'); return null }
     if (res.status === 403) { setPwError('Mot de passe incorrect.'); setState('password'); return null }
@@ -113,6 +156,15 @@ export default function TransferPage() {
     setState('ready')
   }
 
+  async function openPreview(index: number, filename: string) {
+    setPreviewLoading(index)
+    const files = await getDownloadUrls(true)
+    setPreviewLoading(null)
+    if (!files) return
+    setPreviewFilename(filename)
+    setPreviewUrl(files[index].download_url)
+  }
+
   return (
     <>
       <header className="header">
@@ -137,18 +189,12 @@ export default function TransferPage() {
           {state === 'password' && (
             <div className="card">
               <div className="card-body" style={{ textAlign: 'center', paddingBottom: 0 }}>
-                <div style={{ width: 52, height: 52, background: 'var(--primary-light)', borderRadius: '50%', display: 'flex', alignItems: 'center', justifyContent: 'center', margin: '0 auto 16px' }}>
-                  <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="var(--primary)" strokeWidth="2">
-                    <rect x="3" y="11" width="18" height="11" rx="2" ry="2" />
-                    <path d="M7 11V7a5 5 0 0 1 10 0v4" />
-                  </svg>
-                </div>
-                <h2 style={{ fontSize: 17, fontWeight: 700, marginBottom: 6 }}>Transfert protégé</h2>
-                <p className="text-subtext" style={{ marginBottom: 0 }}>Ce transfert est protégé par un mot de passe.</p>
+                <div style={{ width: 46, height: 46, borderRadius: '50%', border: '2px solid var(--border)', display: 'flex', alignItems: 'center', justifyContent: 'center', margin: '0 auto 13px', fontSize: 20 }}>🔒</div>
+                <h2 style={{ fontSize: 16, fontWeight: 700, marginBottom: 5 }}>Transfert protégé</h2>
+                <p className="text-subtext" style={{ marginBottom: 0, fontSize: 12.5 }}>Saisissez le mot de passe partagé par l'expéditeur.</p>
               </div>
               <div className="card-body">
                 <div className="field">
-                  <label htmlFor="passwordInput">Mot de passe</label>
                   <input id="passwordInput" type="password" placeholder="••••••••" autoFocus
                     value={passwordInput} onChange={e => setPasswordInput(e.target.value)}
                     onKeyDown={e => e.key === 'Enter' && handleUnlock()} />
@@ -162,27 +208,14 @@ export default function TransferPage() {
           {state === 'error' && (
             <div className="card">
               <div className="card-body text-center">
-                <div style={{ width: 52, height: 52, background: isExpired ? '#FFFBEB' : '#FEF2F2', borderRadius: '50%', display: 'flex', alignItems: 'center', justifyContent: 'center', margin: '0 auto 16px' }}>
-                  {isExpired ? (
-                    <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="#c9542f" strokeWidth="2">
-                      <circle cx="12" cy="12" r="10" /><polyline points="12 6 12 12 16 14" />
-                    </svg>
-                  ) : (
-                    <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="#EF4444" strokeWidth="2.5">
-                      <circle cx="12" cy="12" r="10" />
-                      <line x1="12" y1="8" x2="12" y2="12" /><line x1="12" y1="16" x2="12.01" y2="16" />
-                    </svg>
-                  )}
+                <div style={{ width: 46, height: 46, borderRadius: '50%', border: `2px solid ${isExpired ? '#c9542f' : '#EF4444'}`, color: isExpired ? '#c9542f' : '#EF4444', display: 'flex', alignItems: 'center', justifyContent: 'center', margin: '0 auto 13px', fontSize: 22 }}>
+                  {isExpired ? '⌛' : '!'}
                 </div>
-                <h2 style={{ fontSize: 18, fontWeight: 700, marginBottom: 6 }}>{errorTitle}</h2>
-                <p className="text-subtext" style={{ marginBottom: isExpired ? 20 : 0 }}>{errorMsg}</p>
+                <h2 style={{ fontSize: 16, fontWeight: 700, marginBottom: 5 }}>{errorTitle}</h2>
+                <p className="text-subtext" style={{ fontSize: 12.5, lineHeight: 1.45, marginBottom: isExpired ? 18 : 0 }}>{errorMsg}</p>
                 {isExpired && (
-                  <a href="mailto:?subject=Nouveau lien OlfTransfer&body=Bonjour, pourriez-vous m'envoyer un nouveau lien ?" className="btn btn-outline" style={{ display: 'inline-flex' }}>
-                    <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-                      <path d="M4 4h16c1.1 0 2 .9 2 2v12c0 1.1-.9 2-2 2H4c-1.1 0-2-.9-2-2V6c0-1.1.9-2 2-2z" />
-                      <polyline points="22,6 12,13 2,6" />
-                    </svg>
-                    Demander un nouveau lien
+                  <a href="mailto:?subject=Nouveau lien OlfTransfer&body=Bonjour, pourriez-vous m'envoyer un nouveau lien ?" className="btn btn-outline btn-full" style={{ display: 'flex' }}>
+                    ✉ Demander un nouveau lien
                   </a>
                 )}
               </div>
@@ -192,20 +225,23 @@ export default function TransferPage() {
           {state === 'ready' && transfer && (() => {
             const totalSize = transfer.files.reduce((s, f) => s + f.size_bytes, 0)
             const expiryDays = getExpiryDays(transfer.expires_at)
+
             return (
-              <>
-                <div className="transfer-header">
+              <div className="card">
+                <div className="card-body">
                   {transfer.sender_username && (
-                    <div className="transfer-sender">
+                    <div className="transfer-sender" style={{ justifyContent: 'flex-start', marginBottom: 8 }}>
                       <div className="sender-avatar">{transfer.sender_username[0].toUpperCase()}</div>
-                      <span><strong>{transfer.sender_username}</strong> vous a envoyé des fichiers</span>
+                      <span style={{ fontSize: 12.5 }}><strong>{transfer.sender_username}</strong> vous a envoyé des fichiers</span>
                     </div>
                   )}
-                  <h1 className="transfer-title">
+
+                  <h1 style={{ fontSize: 24, fontWeight: 700, letterSpacing: '-.4px', marginBottom: 8 }}>
                     {transfer.name || `${transfer.files.length} fichier${transfer.files.length > 1 ? 's' : ''}`}
                   </h1>
-                  <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 10, flexWrap: 'wrap', marginTop: 10 }}>
-                    <span className="transfer-meta" style={{ margin: 0 }}>
+
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap', marginBottom: 20 }}>
+                    <span style={{ fontSize: 13, color: 'var(--subtext)' }}>
                       {transfer.files.length} fichier{transfer.files.length > 1 ? 's' : ''} · {formatSize(totalSize)}
                     </span>
                     <span className="expiry-chip">
@@ -213,39 +249,66 @@ export default function TransferPage() {
                     </span>
                     {transfer.max_downloads && (
                       <span style={{ fontSize: 12, color: 'var(--subtext)' }}>
-                        {transfer.download_count}/{transfer.max_downloads} téléchargements
+                        {transfer.download_count}/{transfer.max_downloads} téléch.
                       </span>
                     )}
                   </div>
-                </div>
 
-                <button
-                  className="btn btn-primary btn-full"
-                  style={{ marginBottom: 16, borderRadius: 11, boxShadow: '0 4px 14px rgba(13,148,136,.25)', fontSize: 15, padding: '14px 22px' }}
-                  onClick={downloadAll}
-                >
-                  <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5">
-                    <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" />
-                    <polyline points="7 10 12 15 17 10" />
-                    <line x1="12" y1="15" x2="12" y2="3" />
-                  </svg>
-                  Tout télécharger · {formatSize(totalSize)}
-                </button>
+                  <div style={{ display: 'flex', gap: 8, marginBottom: 22, alignItems: 'stretch' }}>
+                  <button
+                    className="btn btn-primary"
+                    style={{ flex: 1, borderRadius: 11, boxShadow: '0 4px 14px rgba(13,148,136,.25)', fontSize: 16, fontWeight: 700, padding: '16px 22px' }}
+                    onClick={downloadAll}
+                  >
+                    <svg width="19" height="19" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.4">
+                      <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" />
+                      <polyline points="7 10 12 15 17 10" />
+                      <line x1="12" y1="15" x2="12" y2="3" />
+                    </svg>
+                    Tout télécharger · {formatSize(totalSize)}
+                  </button>
+                  <QrPopover url={window.location.href} style={{ height: 'auto', width: 56, borderRadius: 11 }} />
+                  </div>
 
-                <div className="card">
-                  <div className="card-body">
-                    <ul className="file-list">
-                      {transfer.files.map((f, i) => (
-                        <li key={i} className="download-item">
-                          <div className="file-type-icon">
-                            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-                              <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" />
-                              <polyline points="14 2 14 8 20 8" />
-                            </svg>
+                  <p className="section-label">Fichiers</p>
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: 10, marginBottom: 18 }}>
+                    {transfer.files.map((f, i) => {
+                      const ext = getFileExt(f.filename)
+                      const isImg = isImageFile(f.filename)
+                      const canPreview = isPreviewable(f.filename)
+                      const loading = previewLoading === i
+
+                      return (
+                        <div key={i} style={{ display: 'flex', alignItems: 'center', gap: 13, padding: '11px 13px', border: '1.5px solid var(--border)', borderRadius: 11 }}>
+                          <div style={{
+                            width: 48, height: 48, borderRadius: 8, flexShrink: 0,
+                            display: 'flex', alignItems: 'center', justifyContent: 'center',
+                            background: isImg
+                              ? 'repeating-linear-gradient(45deg,#e3e2db,#e3e2db 6px,#dad9d1 6px,#dad9d1 12px)'
+                              : 'var(--primary-light)',
+                            border: isImg ? 'none' : '1.5px solid #c7ece6',
+                            fontFamily: "'Geist Mono', monospace", fontSize: 9, color: isImg ? '#8a897e' : 'var(--primary)', fontWeight: 600,
+                          }}>
+                            {isImg ? 'IMG' : ext}
                           </div>
-                          <div className="file-info">
-                            <div className="file-name">{f.filename}</div>
+                          <div style={{ flex: 1, minWidth: 0 }}>
+                            <div style={{ fontSize: 14, fontWeight: 600, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{f.filename}</div>
+                            <div style={{ fontSize: 12, color: 'var(--subtext)', marginTop: 2 }}>{formatSize(f.size_bytes)}</div>
                           </div>
+                          <button
+                            style={{
+                              padding: '7px 12px', border: '1.5px solid var(--border)', borderRadius: 8,
+                              fontSize: 12, background: 'white', cursor: canPreview ? 'pointer' : 'default',
+                              color: canPreview ? 'var(--subtext)' : '#b5b4ab',
+                              flexShrink: 0, transition: 'all .15s',
+                              opacity: canPreview ? 1 : 0.45,
+                            }}
+                            disabled={!canPreview || loading}
+                            onClick={() => canPreview && openPreview(i, f.filename)}
+                            title={canPreview ? 'Aperçu' : 'Aperçu non disponible'}
+                          >
+                            {loading ? '…' : 'Aperçu'}
+                          </button>
                           <button className="download-icon-btn" title={`Télécharger ${f.filename}`} onClick={() => downloadFile(i)}>
                             <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5">
                               <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" />
@@ -253,39 +316,54 @@ export default function TransferPage() {
                               <line x1="12" y1="15" x2="12" y2="3" />
                             </svg>
                           </button>
-                        </li>
-                      ))}
-                    </ul>
-                    <div style={{ display: 'flex', flexWrap: 'wrap', gap: '4px 14px', marginTop: 12, paddingTop: 12, borderTop: '1px solid var(--border)' }}>
-                      {transfer.files.map((f, i) => (
-                        <span key={i} style={{ fontSize: 12, color: 'var(--subtext)', fontFamily: "'Geist Mono', monospace" }}>
-                          {f.filename} — {formatSize(f.size_bytes)}
-                        </span>
-                      ))}
-                    </div>
+                        </div>
+                      )
+                    })}
                   </div>
-                  <div className="card-body" style={{ paddingTop: 0 }}>
-                    <div className="trust-line">
-                      <span className="trust-item trust-item--verified">
-                        <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5"><polyline points="20 6 9 17 4 12" /></svg>
-                        Analysé (antivirus)
-                      </span>
-                      <span className="trust-item">
-                        <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><rect x="3" y="11" width="18" height="11" rx="2" ry="2" /><path d="M7 11V7a5 5 0 0 1 10 0v4" /></svg>
-                        Lien chiffré
-                      </span>
-                      <span className="trust-item">
-                        <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2" /><circle cx="12" cy="7" r="4" /></svg>
-                        Aucun compte requis
-                      </span>
-                    </div>
+
+                  <div className="trust-line">
+                    <span className="trust-item trust-item--verified">
+                      <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5"><polyline points="20 6 9 17 4 12" /></svg>
+                      Analysé (antivirus)
+                    </span>
+                    <span className="trust-item">
+                      <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><rect x="3" y="11" width="18" height="11" rx="2" ry="2" /><path d="M7 11V7a5 5 0 0 1 10 0v4" /></svg>
+                      Lien chiffré
+                    </span>
+                    <span className="trust-item">
+                      <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2" /><circle cx="12" cy="7" r="4" /></svg>
+                      Aucun compte requis
+                    </span>
                   </div>
                 </div>
-              </>
+              </div>
             )
           })()}
         </div>
       </main>
+
+      {/* Preview modal */}
+      {previewUrl && previewFilename && (
+        <div className="preview-modal" role="dialog" aria-modal="true">
+          <div className="preview-backdrop" onClick={closePreview} />
+          <div className="preview-container">
+            <div className="preview-header">
+              <span className="preview-filename">{previewFilename}</span>
+              <button className="preview-close" onClick={closePreview}>
+                <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5">
+                  <line x1="18" y1="6" x2="6" y2="18" /><line x1="6" y1="6" x2="18" y2="18" />
+                </svg>
+              </button>
+            </div>
+            <div className="preview-body" style={isAudioFile(previewFilename) ? { background: 'var(--bg)' } : {}}>
+              {isImageFile(previewFilename) && <img src={previewUrl} alt={previewFilename} />}
+              {isVideoFile(previewFilename) && <video src={previewUrl} controls />}
+              {isAudioFile(previewFilename) && <audio src={previewUrl} controls />}
+              {isPdfFile(previewFilename) && <iframe src={previewUrl} title={previewFilename} style={{ background: 'white' }} />}
+            </div>
+          </div>
+        </div>
+      )}
     </>
   )
 }

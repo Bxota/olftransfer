@@ -1,0 +1,31 @@
+{
+  "name": "OlfTransfer",
+  "short_name": "OlfTransfer",
+  "description": "Envoyez des fichiers facilement et en toute sécurité",
+  "start_url": "/",
+  "display": "standalone",
+  "theme_color": "#0D9488",
+  "background_color": "#F4F6F9",
+  "lang": "fr",
+  "icons": [
+    {
+      "src": "data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><rect width='100' height='100' rx='22' fill='%230D9488'/><path d='M50 28 L50 64 M34 44 L50 28 L66 44' stroke='white' stroke-width='8' stroke-linecap='round' stroke-linejoin='round' fill='none'/><rect x='28' y='68' width='44' height='8' rx='4' fill='white'/></svg>",
+      "sizes": "any",
+      "type": "image/svg+xml",
+      "purpose": "any maskable"
+    }
+  ],
+  "share_target": {
+    "action": "/share-target",
+    "method": "POST",
+    "enctype": "multipart/form-data",
+    "params": {
+      "files": [
+        {
+          "name": "files",
+          "accept": ["*/*"]
+        }
+      ]
+    }
+  }
+}
