@@ -55,6 +55,16 @@ jobs:
           source: docker-compose.yml
           target: /opt/${{ env.SERVICE }}
 
+      - name: Copy schema.sql to VPS
+        uses: appleboy/scp-action@v0.1.7
+        with:
+          host: ${{ secrets.VPS_HOST }}
+          username: ${{ secrets.VPS_USER }}
+          key: ${{ secrets.VPS_SSH_KEY }}
+          source: infra/roles/postgres/files/schema.sql
+          target: /opt/${{ env.SERVICE }}
+          strip_components: 4
+
       - name: Trigger infra deploy
         uses: peter-evans/repository-dispatch@v3
         with:
