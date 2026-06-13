@@ -1,7 +1,7 @@
 :root {
-  --primary: #2563EB;
-  --primary-dark: #1D4ED8;
-  --primary-light: #EFF6FF;
+  --primary: #0D9488;
+  --primary-dark: #0F766E;
+  --primary-light: #F0FDFA;
   --bg: #F4F6F9;
   --card: #FFFFFF;
   --text: #111827;
@@ -10,16 +10,18 @@
   --success: #10B981;
   --error: #EF4444;
   --radius: 14px;
-  --shadow: 0 1px 2px rgba(0,0,0,.06), 0 4px 20px rgba(0,0,0,.07);
+  --shadow: 0 1px 2px rgba(13,148,136,.05), 0 4px 20px rgba(13,148,136,.07);
 }
+
+html { scroll-behavior: smooth; }
 
 * { box-sizing: border-box; margin: 0; padding: 0; }
 
 body {
-  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif;
+  font-family: 'Geist', -apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif;
   background: var(--bg);
   color: var(--text);
-  min-height: 100vh;
+  min-height: 100dvh;
   line-height: 1.5;
 }
 
@@ -55,7 +57,7 @@ body {
 
 /* ── Layout ── */
 .page {
-  min-height: 100vh;
+  min-height: 100dvh;
   padding: 90px 20px 40px;
   display: flex; flex-direction: column; align-items: center;
 }
@@ -184,7 +186,7 @@ body {
 
 .field input:focus, .field select:focus {
   border-color: var(--primary);
-  box-shadow: 0 0 0 3px rgba(37,99,235,.08);
+  box-shadow: 0 0 0 3px rgba(13,148,136,.1);
 }
 
 /* ── Buttons ── */
@@ -197,9 +199,14 @@ body {
   transition: all .15s;
   text-decoration: none;
 }
+.btn:focus-visible {
+  outline: 2px solid var(--primary);
+  outline-offset: 2px;
+}
 
 .btn-primary { background: var(--primary); color: white; }
 .btn-primary:hover { background: var(--primary-dark); }
+.btn-primary:active { transform: scale(0.98); }
 .btn-primary:disabled { opacity: .45; cursor: not-allowed; }
 
 .btn-outline {
@@ -207,15 +214,27 @@ body {
   border: 1px solid var(--border);
 }
 .btn-outline:hover { background: var(--bg); }
+.btn-outline:active { transform: scale(0.98); }
 
 .btn-ghost {
   background: transparent; color: var(--subtext);
   padding: 8px 14px;
 }
 .btn-ghost:hover { background: var(--bg); color: var(--text); }
+.btn-ghost:active { transform: scale(0.98); }
 
 .btn-full { width: 100%; }
 .btn-sm { padding: 7px 14px; font-size: 13px; }
+
+/* ── Focus rings for non-.btn interactive elements ── */
+.copy-btn:focus-visible,
+.history-copy:focus-visible,
+.file-remove:focus-visible,
+.history-delete:focus-visible,
+.preview-close:focus-visible {
+  outline: 2px solid var(--primary);
+  outline-offset: 2px;
+}
 
 /* ── Share box ── */
 .share-box {
@@ -251,7 +270,7 @@ body {
 
 /* ── Download page ── */
 .transfer-header { text-align: center; margin-bottom: 24px; }
-.transfer-title { font-size: 22px; font-weight: 700; letter-spacing: -.3px; }
+.transfer-title { font-size: 22px; font-weight: 700; letter-spacing: -.3px; text-wrap: balance; }
 .transfer-meta { font-size: 13px; color: var(--subtext); margin-top: 6px; }
 .transfer-meta span + span::before { content: "·"; margin: 0 6px; }
 
@@ -266,7 +285,7 @@ body {
 
 /* ── Login ── */
 .login-wrap {
-  min-height: 100vh;
+  min-height: 100dvh;
   display: flex; align-items: center; justify-content: center;
   background: var(--bg); padding: 24px;
 }

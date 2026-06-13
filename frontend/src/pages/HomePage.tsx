@@ -193,10 +193,23 @@ export default function HomePage() {
   const virusResolveRef = useRef<((ack: boolean) => void) | null>(null)
   const [virusWarning, setVirusWarning] = useState<VirusWarning | null>(null)
 
+  // Inline delete confirm
+  const [confirmToken, setConfirmToken] = useState<string | null>(null)
+  const [bulkConfirm, setBulkConfirm] = useState(false)
+  const [deleteError, setDeleteError] = useState('')
+
   // Drag state
   const [dragOver, setDragOver] = useState(false)
 
   useEffect(() => { loadHistory(); checkPendingTransfers() }, [])
+
+  useEffect(() => {
+    function onKeyDown(e: KeyboardEvent) {
+      if (e.key === 'Escape') { setConfirmToken(null); setBulkConfirm(false) }
+    }
+    document.addEventListener('keydown', onKeyDown)
+    return () => document.removeEventListener('keydown', onKeyDown)
+  }, [])
 
   // Cleanup thumb URLs on unmount
   useEffect(() => () => {
@@ -430,27 +443,31 @@ export default function HomePage() {
     setSelectedTokens(new Set())
   }
 
-  async function deleteTransfer(token: string) {
-    if (!confirm('Supprimer ce transfert ? Cette action est irréversible.')) return
+  async function confirmDeleteTransfer(token: string) {
+    setConfirmToken(null)
     const res = await fetch(`/transfers/${token}`, { method: 'DELETE' })
     if (res.ok) {
       setHistory(h => h.filter(t => t.token !== token))
       setSelectedTokens(s => { const n = new Set(s); n.delete(token); return n })
     } else {
-      alert('Impossible de supprimer le transfert.')
+      setDeleteError('Impossible de supprimer le transfert.')
+      setTimeout(() => setDeleteError(''), 4000)
     }
   }
 
-  async function bulkDelete() {
+  async function confirmBulkDelete() {
+    setBulkConfirm(false)
     const tokens = [...selectedTokens]
-    if (tokens.length === 0) return
-    if (!confirm(`Supprimer ${tokens.length} transfert${tokens.length > 1 ? 's' : ''} ? Cette action est irréversible.`)) return
     const res = await fetch('/transfers', {
       method: 'DELETE',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ tokens }),
     })
-    if (!res.ok) { alert('Impossible de supprimer les transferts.'); return }
+    if (!res.ok) {
+      setDeleteError('Impossible de supprimer les transferts.')
+      setTimeout(() => setDeleteError(''), 4000)
+      return
+    }
     const { deleted } = await res.json()
     setHistory(h => h.filter(t => !deleted.includes(t.token)))
     setSelectedTokens(new Set())
@@ -696,7 +713,7 @@ export default function HomePage() {
                     <polyline points="20 6 9 17 4 12" />
                   </svg>
                 </div>
-                <h2 style={{ fontSize: 18, fontWeight: 700, marginBottom: 6 }}>Transfert prêt !</h2>
+                <h2 style={{ fontSize: 18, fontWeight: 700, marginBottom: 6 }}>Transfert prêt</h2>
                 <p className="text-subtext" style={{ marginBottom: 20 }}>Partagez ce lien avec vos destinataires.</p>
                 <CopyBox text={shareLink} />
                 <button className="btn btn-outline btn-full mt-4" onClick={resetTransfer}>Nouveau transfert</button>
@@ -722,20 +739,37 @@ export default function HomePage() {
 
             {selectedTokens.size > 0 && (
               <div id="bulkBar">
-                <label className="bulk-select-label">
-                  <input
-                    type="checkbox"
-                    checked={selectedTokens.size === history.length}
-                    ref={el => { if (el) el.indeterminate = selectedTokens.size > 0 && selectedTokens.size < history.length }}
-                    onChange={e => toggleAll(e.target.checked)}
-                  />
-                  <span>{selectedTokens.size} sélectionné{selectedTokens.size > 1 ? 's' : ''}</span>
-                </label>
-                <button className="bulk-delete-btn" onClick={bulkDelete}>
-                  <TrashIcon size={13} strokeWidth={2} dangerHover />
-                  Supprimer
-                </button>
+                {bulkConfirm ? (
+                  <>
+                    <span style={{ fontSize: 13, color: '#991B1B', fontWeight: 500 }}>
+                      Supprimer {selectedTokens.size} transfert{selectedTokens.size > 1 ? 's' : ''} ?
+                    </span>
+                    <div style={{ display: 'flex', gap: 6 }}>
+                      <button className="btn btn-ghost btn-sm" onClick={() => setBulkConfirm(false)}>Annuler</button>
+                      <button className="bulk-delete-btn" onClick={confirmBulkDelete}>Confirmer</button>
+                    </div>
+                  </>
+                ) : (
+                  <>
+                    <label className="bulk-select-label">
+                      <input
+                        type="checkbox"
+                        checked={selectedTokens.size === history.length}
+                        ref={el => { if (el) el.indeterminate = selectedTokens.size > 0 && selectedTokens.size < history.length }}
+                        onChange={e => toggleAll(e.target.checked)}
+                      />
+                      <span>{selectedTokens.size} sélectionné{selectedTokens.size > 1 ? 's' : ''}</span>
+                    </label>
+                    <button className="bulk-delete-btn" onClick={() => setBulkConfirm(true)}>
+                      <TrashIcon size={13} strokeWidth={2} dangerHover />
+                      Supprimer
+                    </button>
+                  </>
+                )}
               </div>
+            )}
+            {deleteError && (
+              <div className="alert alert-error" style={{ margin: '0 28px 12px' }}>{deleteError}</div>
             )}
 
             <div>
@@ -767,17 +801,27 @@ export default function HomePage() {
                       </div>
                     </div>
                     <div className="history-right">
-                      <span className={`history-badge history-badge--${t.is_expired || limitReached ? 'expired' : 'active'}`}>
-                        {t.is_expired ? 'Expiré' : limitReached ? 'Limite atteinte' : 'Actif'}
-                      </span>
-                      <span className="history-dl">
-                        <DownloadIcon size={12} strokeWidth={2.5} />
-                        {t.max_downloads ? `${t.download_count} / ${t.max_downloads}` : t.download_count}
-                      </span>
-                      {canCopy && <CopyBtn url={t.share_url} />}
-                      <button className="history-delete" title="Supprimer" onClick={() => deleteTransfer(t.token)}>
-                        <TrashIcon size={14} strokeWidth={2} dangerHover />
-                      </button>
+                      {confirmToken === t.token ? (
+                        <>
+                          <span style={{ fontSize: 12, color: '#991B1B', fontWeight: 500, whiteSpace: 'nowrap' }}>Supprimer ?</span>
+                          <button className="btn btn-ghost btn-sm" onClick={() => setConfirmToken(null)}>Non</button>
+                          <button className="bulk-delete-btn" onClick={() => confirmDeleteTransfer(t.token)}>Oui</button>
+                        </>
+                      ) : (
+                        <>
+                          <span className={`history-badge history-badge--${t.is_expired || limitReached ? 'expired' : 'active'}`}>
+                            {t.is_expired ? 'Expiré' : limitReached ? 'Limite atteinte' : 'Actif'}
+                          </span>
+                          <span className="history-dl">
+                            <DownloadIcon size={12} strokeWidth={2.5} />
+                            {t.max_downloads ? `${t.download_count} / ${t.max_downloads}` : t.download_count}
+                          </span>
+                          {canCopy && <CopyBtn url={t.share_url} />}
+                          <button className="history-delete" title="Supprimer" onClick={() => setConfirmToken(t.token)}>
+                            <TrashIcon size={14} strokeWidth={2} dangerHover />
+                          </button>
+                        </>
+                      )}
                     </div>
                   </div>
                 )
@@ -872,7 +916,7 @@ function CopyBox({ text }: { text: string }) {
   return (
     <div className="share-box">
       <span className="share-link">{text}</span>
-      <button className={`copy-btn${copied ? ' copied' : ''}`} onClick={copy}>{copied ? 'Copié !' : 'Copier'}</button>
+      <button className={`copy-btn${copied ? ' copied' : ''}`} onClick={copy}>{copied ? 'Copié' : 'Copier'}</button>
     </div>
   )
 }
@@ -886,6 +930,6 @@ function CopyBtn({ url }: { url: string }) {
     })
   }
   return (
-    <button className={`history-copy${copied ? ' copied' : ''}`} onClick={copy}>{copied ? 'Copié !' : 'Copier'}</button>
+    <button className={`history-copy${copied ? ' copied' : ''}`} onClick={copy}>{copied ? 'Copié' : 'Copier'}</button>
   )
 }
