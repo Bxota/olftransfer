@@ -98,6 +98,17 @@ BEGIN
     END IF;
 END $$;
 
+-- Migration : storage_key pour les fichiers existants sans cette colonne
+DO $$
+BEGIN
+    IF NOT EXISTS (
+        SELECT 1 FROM information_schema.columns
+        WHERE table_name = 'files' AND column_name = 'storage_key'
+    ) THEN
+        ALTER TABLE files ADD COLUMN storage_key VARCHAR NOT NULL DEFAULT '';
+    END IF;
+END $$;
+
 -- Migration : multipart_upload_id pour la reprise des uploads interrompus
 DO $$
 BEGIN
