@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from 'react'
 import { Link, useParams } from 'react-router-dom'
 import { formatSize, formatDateLong } from '../lib/utils'
 import { QrPopover } from '../components/QrPopover'
+import { PreviewModal, PreviewKind } from '../components/PreviewModal'
 
 interface TransferFile {
   filename: string
@@ -65,18 +66,16 @@ export default function TransferPage() {
   // Preview modal
   const [previewUrl, setPreviewUrl] = useState<string | null>(null)
   const [previewFilename, setPreviewFilename] = useState<string | null>(null)
+  const [previewIndex, setPreviewIndex] = useState<number | null>(null)
   const [previewLoading, setPreviewLoading] = useState<number | null>(null)
+
+  // Download in-flight (anti spam-click)
+  const [downloadingAll, setDownloadingAll] = useState(false)
+  const [downloadingFile, setDownloadingFile] = useState<number | null>(null)
 
   useEffect(() => { loadTransfer() }, [token])
 
-  useEffect(() => {
-    if (!previewUrl) return
-    function onKey(e: KeyboardEvent) { if (e.key === 'Escape') closePreview() }
-    document.addEventListener('keydown', onKey)
-    return () => document.removeEventListener('keydown', onKey)
-  }, [previewUrl])
-
-  function closePreview() { setPreviewUrl(null); setPreviewFilename(null) }
+  function closePreview() { setPreviewUrl(null); setPreviewFilename(null); setPreviewIndex(null) }
 
   async function loadTransfer() {
     try {
@@ -123,22 +122,36 @@ export default function TransferPage() {
   }
 
   async function downloadFile(index: number) {
-    const files = await getDownloadUrls()
-    if (!files) return
-    triggerDownload(files[index].download_url, files[index].filename)
+    if (downloadingFile !== null) return
+    setDownloadingFile(index)
+    try {
+      const files = await getDownloadUrls()
+      if (!files) return
+      triggerDownload(files[index].download_url, files[index].filename)
+    } finally {
+      setDownloadingFile(null)
+    }
   }
 
   async function downloadAll() {
-    if (transfer && transfer.files.length > 1) {
-      const params = passwordRef.current ? `?password=${encodeURIComponent(passwordRef.current)}` : ''
-      triggerDownload(`/transfers/${token}/download-zip${params}`, `${token}.zip`)
-      return
-    }
-    const files = await getDownloadUrls()
-    if (!files) return
-    for (const f of files) {
-      triggerDownload(f.download_url, f.filename)
-      await new Promise(r => setTimeout(r, 200))
+    if (downloadingAll) return
+    setDownloadingAll(true)
+    try {
+      if (transfer && transfer.files.length > 1) {
+        const params = passwordRef.current ? `?password=${encodeURIComponent(passwordRef.current)}` : ''
+        triggerDownload(`/transfers/${token}/download-zip${params}`, `${token}.zip`)
+        // Le zip se construit côté serveur : on garde le bouton désactivé quelques secondes
+        await new Promise(r => setTimeout(r, 5000))
+        return
+      }
+      const files = await getDownloadUrls()
+      if (!files) return
+      for (const f of files) {
+        triggerDownload(f.download_url, f.filename)
+        await new Promise(r => setTimeout(r, 200))
+      }
+    } finally {
+      setDownloadingAll(false)
     }
   }
 
@@ -157,11 +170,13 @@ export default function TransferPage() {
   }
 
   async function openPreview(index: number, filename: string) {
+    if (previewLoading !== null) return
     setPreviewLoading(index)
     const files = await getDownloadUrls(true)
     setPreviewLoading(null)
     if (!files) return
     setPreviewFilename(filename)
+    setPreviewIndex(index)
     setPreviewUrl(files[index].download_url)
   }
 
@@ -259,13 +274,23 @@ export default function TransferPage() {
                     className="btn btn-primary"
                     style={{ flex: 1, borderRadius: 11, boxShadow: '0 4px 14px rgba(13,148,136,.25)', fontSize: 16, fontWeight: 700, padding: '16px 22px' }}
                     onClick={downloadAll}
+                    disabled={downloadingAll}
                   >
-                    <svg width="19" height="19" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.4">
-                      <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" />
-                      <polyline points="7 10 12 15 17 10" />
-                      <line x1="12" y1="15" x2="12" y2="3" />
-                    </svg>
-                    Tout télécharger · {formatSize(totalSize)}
+                    {downloadingAll ? (
+                      <>
+                        <span className="btn-spinner" aria-hidden="true" />
+                        Préparation du téléchargement…
+                      </>
+                    ) : (
+                      <>
+                        <svg width="19" height="19" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.4">
+                          <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" />
+                          <polyline points="7 10 12 15 17 10" />
+                          <line x1="12" y1="15" x2="12" y2="3" />
+                        </svg>
+                        Tout télécharger · {formatSize(totalSize)}
+                      </>
+                    )}
                   </button>
                   <QrPopover url={window.location.href} style={{ height: 'auto', width: 56, borderRadius: 11 }} />
                   </div>
@@ -309,12 +334,16 @@ export default function TransferPage() {
                           >
                             {loading ? '…' : 'Aperçu'}
                           </button>
-                          <button className="download-icon-btn" title={`Télécharger ${f.filename}`} onClick={() => downloadFile(i)}>
-                            <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5">
-                              <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" />
-                              <polyline points="7 10 12 15 17 10" />
-                              <line x1="12" y1="15" x2="12" y2="3" />
-                            </svg>
+                          <button className="download-icon-btn" title={`Télécharger ${f.filename}`} disabled={downloadingFile !== null} onClick={() => downloadFile(i)}>
+                            {downloadingFile === i ? (
+                              <span className="btn-spinner btn-spinner--dark" aria-hidden="true" />
+                            ) : (
+                              <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5">
+                                <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" />
+                                <polyline points="7 10 12 15 17 10" />
+                                <line x1="12" y1="15" x2="12" y2="3" />
+                              </svg>
+                            )}
                           </button>
                         </div>
                       )
@@ -343,27 +372,21 @@ export default function TransferPage() {
       </main>
 
       {/* Preview modal */}
-      {previewUrl && previewFilename && (
-        <div className="preview-modal" role="dialog" aria-modal="true">
-          <div className="preview-backdrop" onClick={closePreview} />
-          <div className="preview-container">
-            <div className="preview-header">
-              <span className="preview-filename">{previewFilename}</span>
-              <button className="preview-close" onClick={closePreview}>
-                <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5">
-                  <line x1="18" y1="6" x2="6" y2="18" /><line x1="6" y1="6" x2="18" y2="18" />
-                </svg>
-              </button>
-            </div>
-            <div className="preview-body" style={isAudioFile(previewFilename) ? { background: 'var(--bg)' } : {}}>
-              {isImageFile(previewFilename) && <img src={previewUrl} alt={previewFilename} />}
-              {isVideoFile(previewFilename) && <video src={previewUrl} controls />}
-              {isAudioFile(previewFilename) && <audio src={previewUrl} controls />}
-              {isPdfFile(previewFilename) && <iframe src={previewUrl} title={previewFilename} style={{ background: 'white' }} />}
-            </div>
-          </div>
-        </div>
-      )}
+      {previewUrl && previewFilename && (() => {
+        const kind: PreviewKind = isImageFile(previewFilename) ? 'image'
+          : isVideoFile(previewFilename) ? 'video'
+          : isAudioFile(previewFilename) ? 'audio'
+          : 'pdf'
+        return (
+          <PreviewModal
+            filename={previewFilename}
+            kind={kind}
+            src={previewUrl}
+            onClose={closePreview}
+            onDownload={previewIndex !== null ? () => downloadFile(previewIndex) : undefined}
+          />
+        )
+      })()}
     </>
   )
 }

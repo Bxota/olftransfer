@@ -186,3 +186,13 @@ BEGIN
         ALTER TABLE transfers ADD COLUMN restore_requested_at TIMESTAMP;
     END IF;
 END $$;
+
+DO $$
+BEGIN
+    IF NOT EXISTS (
+        SELECT 1 FROM information_schema.columns
+        WHERE table_name = 'transfers' AND column_name = 'last_notified_at'
+    ) THEN
+        ALTER TABLE transfers ADD COLUMN last_notified_at TIMESTAMP;
+    END IF;
+END $$;

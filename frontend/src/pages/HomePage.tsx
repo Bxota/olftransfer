@@ -13,7 +13,8 @@ import DownloadIcon from '../icons/download-icon'
 import TrashIcon from '../icons/trash-icon'
 import RefreshIcon from '../icons/refresh-icon'
 import type { AnimatedIconHandle } from '../icons/types'
-import { formatBytes, formatSize, formatDate, getExt, getStem, getFileCategory, FileCategory } from '../lib/utils'
+import { formatBytes, formatSize, formatDate, getExt, getStem, getFileCategory, runWithConcurrency, FileCategory } from '../lib/utils'
+import { PreviewModal, PreviewKind } from '../components/PreviewModal'
 
 // ── Types ────────────────────────────────────────────────────────────────────
 
@@ -30,6 +31,7 @@ interface VirusWarning { filename: string; virus: string }
 // ── Upload session (localStorage) ───────────────────────────────────────────
 
 const CHUNK_SIZE = 100 * 1024 * 1024
+const UPLOAD_CONCURRENCY = 3
 
 interface MpFile { file_id: string; filename: string; upload_id: string; total_parts: number; completed_parts: number[] }
 interface MpSession { token: string; share_url: string; files: MpFile[] }
@@ -87,20 +89,17 @@ function uploadFileSingle(
 }
 
 function uploadPart(
-  chunk: Blob, url: string, partNumber: number, totalParts: number, index: number,
-  setProgress: (fn: (prev: Record<number, FileProgress>) => Record<number, FileProgress>) => void,
+  chunk: Blob, url: string, partNumber: number,
+  onProgress: (partNumber: number, loaded: number) => void,
 ): Promise<void> {
   return new Promise((resolve, reject) => {
     const xhr = new XMLHttpRequest()
     xhr.open('PUT', url)
     xhr.upload.onprogress = e => {
-      if (e.lengthComputable) {
-        const overallPct = Math.round(((partNumber - 1 + e.loaded / e.total) / totalParts) * 100)
-        setProgress(p => ({ ...p, [index]: { pct: overallPct, done: false } }))
-      }
+      if (e.lengthComputable) onProgress(partNumber, e.loaded)
     }
     xhr.onload = () => {
-      if (xhr.status >= 200 && xhr.status < 300) resolve()
+      if (xhr.status >= 200 && xhr.status < 300) { onProgress(partNumber, chunk.size); resolve() }
       else reject(new Error(`Erreur upload partie ${partNumber}: ${xhr.status}`))
     }
     xhr.onerror = () => reject(new Error(`Erreur réseau partie ${partNumber}`))
@@ -117,23 +116,37 @@ async function uploadFileMultipart(
   const sessionFile = session?.files?.find(f => f.file_id === String(fileId))
   let completedParts: number[] = sessionFile?.completed_parts ?? []
 
-  for (let partNumber = 1; partNumber <= totalParts; partNumber++) {
-    if (completedParts.includes(partNumber)) {
-      setProgress(p => ({ ...p, [index]: { pct: Math.round((partNumber / totalParts) * 100), done: false } }))
-      continue
-    }
-    const urlRes = await fetch(`/uploads/${fileId}/part-url`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ upload_id: uploadId, part_number: partNumber }),
-    })
-    if (!urlRes.ok) throw new Error(`Impossible d'obtenir l'URL de la partie ${partNumber}`)
-    const { url } = await urlRes.json()
-    const start = (partNumber - 1) * CHUNK_SIZE
-    await uploadPart(file.slice(start, start + CHUNK_SIZE), url, partNumber, totalParts, index, setProgress)
-    completedParts = [...completedParts, partNumber]
-    updateSessionProgress(fileId, completedParts)
+  // Progression par octets pour supporter les parts uploadées en parallèle
+  const loadedByPart: Record<number, number> = {}
+  completedParts.forEach(pn => {
+    loadedByPart[pn] = Math.min(CHUNK_SIZE, file.size - (pn - 1) * CHUNK_SIZE)
+  })
+  function reportProgress(partNumber: number, loaded: number) {
+    loadedByPart[partNumber] = loaded
+    const totalLoaded = Object.values(loadedByPart).reduce((a, b) => a + b, 0)
+    const pct = Math.min(99, Math.round((totalLoaded / file.size) * 100))
+    setProgress(p => ({ ...p, [index]: { pct, done: false } }))
   }
+  if (completedParts.length > 0) reportProgress(completedParts[0], loadedByPart[completedParts[0]])
+
+  const partTasks: (() => Promise<void>)[] = []
+  for (let partNumber = 1; partNumber <= totalParts; partNumber++) {
+    if (completedParts.includes(partNumber)) continue
+    partTasks.push(async () => {
+      const urlRes = await fetch(`/uploads/${fileId}/part-url`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ upload_id: uploadId, part_number: partNumber }),
+      })
+      if (!urlRes.ok) throw new Error(`Impossible d'obtenir l'URL de la partie ${partNumber}`)
+      const { url } = await urlRes.json()
+      const start = (partNumber - 1) * CHUNK_SIZE
+      await uploadPart(file.slice(start, start + CHUNK_SIZE), url, partNumber, reportProgress)
+      completedParts = [...completedParts, partNumber]
+      updateSessionProgress(fileId, completedParts)
+    })
+  }
+  await runWithConcurrency(partTasks, UPLOAD_CONCURRENCY)
 
   const completeRes = await fetch(`/uploads/${fileId}/complete`, {
     method: 'POST',
@@ -188,14 +201,14 @@ export default function HomePage() {
   const [progress, setProgress] = useState<Record<number, FileProgress>>({})
 
   // Chip popovers
-  const [openChip, setOpenChip] = useState<'expiry' | 'password' | 'maxdl' | null>(null)
+  const [openChip, setOpenChip] = useState<'name' | 'expiry' | 'password' | 'maxdl' | null>(null)
+  const [chipName, setChipName] = useState('')
   const [chipExpiry, setChipExpiry] = useState('168')
   const [chipPassword, setChipPassword] = useState('')
   const [chipMaxDl, setChipMaxDl] = useState('')
   const [chipSaving, setChipSaving] = useState(false)
 
   // Options
-  const [transferName, setTransferName] = useState('')
   const [expiry, setExpiry] = useState('168')
   const [maxDownloads, setMaxDownloads] = useState('')
   const [transferPassword, setTransferPassword] = useState('')
@@ -283,7 +296,7 @@ export default function HomePage() {
   useEffect(() => {
     if (!previewFile) { setPreviewUrl(null); setPreviewText(null); return }
     const cat = getFileCategory(previewFile)
-    if (cat === 'text') {
+    if (cat === 'text' || cat === 'code') {
       const reader = new FileReader()
       reader.onload = e => setPreviewText(e.target?.result as string)
       reader.readAsText(previewFile)
@@ -343,7 +356,6 @@ export default function HomePage() {
     setThumbVersion(v => v + 1)
     setFiles([])
     setFileNames([])
-    setTransferName('')
     setShareToken('')
     setShareLink('')
     setSendError('')
@@ -351,12 +363,14 @@ export default function HomePage() {
     setUploading(false)
     setCreating(false)
     setOpenChip(null)
+    setChipName('')
     setChipExpiry('168')
     setChipPassword('')
     setChipMaxDl('')
   }
 
   async function patchTransfer(patch: {
+    name?: string
     expires_in_hours?: number
     password?: string
     remove_password?: boolean
@@ -438,11 +452,14 @@ export default function HomePage() {
       setUploading(true)
       setProgress({})
 
-      for (let i = 0; i < resumeData.uploads.length; i++) {
-        const upload = resumeData.uploads[i]
-        if (upload.multipart_upload_id) await uploadFileMultipart(orderedFiles[i], upload.file_id, upload.multipart_upload_id, i, setProgress)
-        else await uploadFileSingle(orderedFiles[i], upload.upload_url, i, setProgress)
-      }
+      await runWithConcurrency(
+        resumeData.uploads.map((upload: any, i: number) => () =>
+          upload.multipart_upload_id
+            ? uploadFileMultipart(orderedFiles[i], upload.file_id, upload.multipart_upload_id, i, setProgress)
+            : uploadFileSingle(orderedFiles[i], upload.upload_url, i, setProgress)
+        ),
+        UPLOAD_CONCURRENCY,
+      )
 
       let confirmRes = await fetch(`/transfers/${pending.token}/confirm`, {
         method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({}),
@@ -485,7 +502,7 @@ export default function HomePage() {
             size_bytes: f.size,
             mime_type: f.type || null,
           })),
-          name: transferName.trim() || null,
+          name: chipName.trim() || null,
           expires_in_hours: parseInt(expiry),
           max_downloads: maxDownloads ? parseInt(maxDownloads) : null,
           password: transferPassword || null,
@@ -503,8 +520,10 @@ export default function HomePage() {
       setCreating(false)
       setUploading(true)
 
-      for (let i = 0; i < filesToSend.length; i++)
-        await uploadFile(filesToSend[i], transfer.uploads[i], i, setProgress)
+      await runWithConcurrency(
+        filesToSend.map((f, i) => () => uploadFile(f, transfer.uploads[i], i, setProgress)),
+        UPLOAD_CONCURRENCY,
+      )
 
       let confirmRes = await fetch(`/transfers/${transfer.token}/confirm`, {
         method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({}),
@@ -579,9 +598,19 @@ export default function HomePage() {
   }
 
   async function restoreTransfer(token: string) {
-    const res = await fetch(`/transfers/${token}/restore`, { method: 'POST' })
-    if (res.ok) {
-      setHistory(h => h.map(t => t.token === token ? { ...t, is_restoring: true } : t))
+    setDeleteError('')
+    try {
+      const res = await fetch(`/transfers/${token}/restore`, { method: 'POST' })
+      if (!res.ok) {
+        const detail = await res.json().then((d: any) => d.detail).catch(() => null)
+        setDeleteError(detail || 'Impossible de relancer ce transfert.')
+        return
+      }
+      const { status } = await res.json()
+      if (status === 'restored') loadHistory()
+      else setHistory(h => h.map(t => t.token === token ? { ...t, is_restoring: true } : t))
+    } catch {
+      setDeleteError('Impossible de relancer ce transfert.')
     }
   }
 
@@ -756,12 +785,14 @@ export default function HomePage() {
                     const prog = progress[i] ?? { pct: 0, done: false }
                     const cat = getFileCategory(f)
                     const thumb = thumbUrlsRef.current[i]
+                    const canPreview = cat !== 'other'
+                    const openFilePreview = () => canPreview && setPreviewFile(f)
                     return (
                       <li key={i} className="file-item">
                         {cat === 'image' && thumb ? (
-                          <img className="file-thumb" src={thumb} alt="" />
+                          <img className="file-thumb" src={thumb} alt="" title="Aperçu" style={{ cursor: 'pointer' }} onClick={openFilePreview} />
                         ) : (
-                          <div className="file-type-icon">
+                          <div className={`file-type-icon${canPreview ? ' previewable' : ''}`} title={canPreview ? 'Aperçu' : undefined} style={canPreview ? { cursor: 'pointer' } : undefined} onClick={openFilePreview}>
                             {cat === 'image' ? <CameraIcon size={16} strokeWidth={2} /> :
                              cat === 'video' ? <BrandZoomIcon size={16} strokeWidth={2} /> :
                              cat === 'code' ? <CodeIcon size={16} strokeWidth={2} /> :
@@ -785,6 +816,28 @@ export default function HomePage() {
                 </ul>
 
                 <div className="chip-options" onClick={e => e.stopPropagation()}>
+                  {/* Name chip */}
+                  <div className="chip-wrap">
+                    <button className={`chip ${chipName ? 'chip-active' : 'chip-inactive'}`} onClick={() => setOpenChip(openChip === 'name' ? null : 'name')}>
+                      {chipName ? `🏷 ${chipName} ▾` : '🏷 Nommer le transfert'}
+                    </button>
+                    {openChip === 'name' && (
+                      <div className="chip-popover">
+                        <input type="text" placeholder="Nom du transfert" maxLength={100} value={chipName}
+                          onChange={e => setChipName(e.target.value)}
+                          onKeyDown={e => e.key === 'Enter' && patchTransfer({ name: chipName.trim() })}
+                          autoFocus />
+                        <div className="chip-popover-actions">
+                          {chipName && <button className="chip-popover-remove" disabled={chipSaving} onClick={() => { setChipName(''); patchTransfer({ name: '' }) }}>Retirer</button>}
+                          <button className="chip-popover-cancel" onClick={() => setOpenChip(null)}>Annuler</button>
+                          <button className="chip-popover-save" disabled={chipSaving} onClick={() => patchTransfer({ name: chipName.trim() })}>
+                            {chipSaving ? '…' : 'Appliquer'}
+                          </button>
+                        </div>
+                      </div>
+                    )}
+                  </div>
+
                   {/* Expiry chip */}
                   <div className="chip-wrap">
                     <button className="chip chip-active" onClick={() => setOpenChip(openChip === 'expiry' ? null : 'expiry')}>
@@ -1104,28 +1157,19 @@ export default function HomePage() {
         </div>
       )}
 
-      {previewFile && (
-        <div className="preview-modal" role="dialog" aria-modal="true" onKeyDown={e => e.key === 'Escape' && setPreviewFile(null)}>
-          <div className="preview-backdrop" onClick={() => setPreviewFile(null)} />
-          <div className="preview-container">
-            <div className="preview-header">
-              <span className="preview-filename">{previewFile.name}</span>
-              <button className="preview-close" title="Fermer" onClick={() => setPreviewFile(null)}>
-                <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5">
-                  <line x1="18" y1="6" x2="6" y2="18" /><line x1="6" y1="6" x2="18" y2="18" />
-                </svg>
-              </button>
-            </div>
-            <div className="preview-body" style={previewText ? { background: '#1e1e1e' } : previewFile && getFileCategory(previewFile) === 'audio' ? { background: 'var(--bg)' } : {}}>
-              {previewText && <pre>{previewText}</pre>}
-              {previewUrl && getFileCategory(previewFile) === 'image' && <img src={previewUrl} alt={previewFile.name} />}
-              {previewUrl && getFileCategory(previewFile) === 'video' && <video src={previewUrl} controls onPause={undefined} />}
-              {previewUrl && getFileCategory(previewFile) === 'audio' && <audio src={previewUrl} controls />}
-              {previewUrl && getFileCategory(previewFile) === 'pdf' && <iframe src={previewUrl} title={previewFile.name} style={{ background: 'white' }} />}
-            </div>
-          </div>
-        </div>
-      )}
+      {previewFile && (() => {
+        const cat = getFileCategory(previewFile)
+        const kind: PreviewKind = cat === 'code' ? 'text' : cat as PreviewKind
+        return (
+          <PreviewModal
+            filename={previewFile.name}
+            kind={kind}
+            src={previewUrl}
+            text={previewText}
+            onClose={() => setPreviewFile(null)}
+          />
+        )
+      })()}
     </>
   )
 }

@@ -147,7 +147,7 @@ def _spa_response():
     raise HTTPException(status_code=503, detail="Frontend not built")
 
 
-def _download_file_rows(token: str, password: str | None):
+def _download_file_rows(token: str, password: str | None, notify: bool = True):
     with get_conn() as conn:
         cur = conn.cursor()
         cur.execute(
@@ -191,7 +191,21 @@ def _download_file_rows(token: str, password: str | None):
             (transfer_id,),
         )
 
-    return rows, sender_email, transfer_name
+        # Throttle : au plus une notification mail par transfert toutes les 5 minutes
+        # (UPDATE atomique pour éviter les doublons entre requêtes concurrentes).
+        should_notify = False
+        if notify:
+            cur.execute(
+                """
+                UPDATE transfers SET last_notified_at = NOW()
+                WHERE id = %s AND (last_notified_at IS NULL OR last_notified_at < NOW() - INTERVAL '5 minutes')
+                RETURNING id
+                """,
+                (transfer_id,),
+            )
+            should_notify = cur.fetchone() is not None
+
+    return rows, sender_email, transfer_name, should_notify
 
 
 def _zip_entry_name(filename: str, used_names: set[str]) -> str:
@@ -702,7 +716,7 @@ def restore_transfer(token: str, user: dict = Depends(get_current_user)):
         cur = conn.cursor()
         cur.execute(
             """
-            SELECT id, archived_at, restore_requested_at
+            SELECT id, archived_at, restore_requested_at, expires_at, files_purged_at
             FROM transfers
             WHERE token = %s AND user_id = %s AND confirmed_at IS NOT NULL
             """,
@@ -712,10 +726,20 @@ def restore_transfer(token: str, user: dict = Depends(get_current_user)):
         if not row:
             raise HTTPException(status_code=404, detail="Transfer not found")
 
-        transfer_id, archived_at, restore_requested_at = row
+        transfer_id, archived_at, restore_requested_at, expires_at, files_purged_at = row
 
         if not archived_at:
-            raise HTTPException(status_code=409, detail="Transfer n'est pas en stockage froid")
+            # Expiré mais pas encore passé en stockage froid par le cron :
+            # les fichiers sont toujours en STANDARD, il suffit de prolonger.
+            if files_purged_at:
+                raise HTTPException(status_code=410, detail="Fichiers supprimés, restauration impossible")
+            if expires_at.replace(tzinfo=timezone.utc) >= datetime.now(timezone.utc):
+                raise HTTPException(status_code=409, detail="Transfer n'est pas expiré")
+            cur.execute(
+                "UPDATE transfers SET expires_at = NOW() + INTERVAL '7 days' WHERE id = %s",
+                (transfer_id,),
+            )
+            return RestoreTransferResponse(status="restored")
 
         if restore_requested_at:
             return RestoreTransferResponse(status="restoring")
@@ -893,13 +917,13 @@ def get_transfer(token: str, password: str | None = Query(default=None)):
 
 @app.get("/transfers/{token}/download", tags=["Transfers"], summary="Obtenir les URLs de téléchargement", response_model=DownloadResponse)
 def download_transfer(token: str, request: Request, password: str | None = Query(default=None, description="Mot de passe si le transfert est protégé"), inline: bool = Query(default=False, description="Si True, renvoie des URLs inline (aperçu) au lieu de attachment"), downloader: dict | None = Depends(get_optional_user)):
-    rows, sender_email, transfer_name = _download_file_rows(token, password)
+    rows, sender_email, transfer_name, should_notify = _download_file_rows(token, password, notify=not inline)
 
     file_count = len(rows)
     total_bytes = sum(r[1] for r in rows)
     filenames = [r[0] for r in rows]
     downloader_email = downloader["email"] if downloader else None
-    background = BackgroundTask(send_download_notification, sender_email, token, transfer_name, filenames, total_bytes, downloader_email)
+    background = BackgroundTask(send_download_notification, sender_email, token, transfer_name, filenames, total_bytes, downloader_email) if should_notify else None
     return Response(
         content=DownloadResponse(files=[
             DownloadUrl(filename=r[0], size_bytes=r[1], download_url=presigned_download_url(r[2], r[0], inline=inline))
@@ -912,7 +936,7 @@ def download_transfer(token: str, request: Request, password: str | None = Query
 
 @app.get("/transfers/{token}/download-zip", tags=["Transfers"], summary="Télécharger tous les fichiers en ZIP")
 def download_transfer_zip(token: str, password: str | None = Query(default=None, description="Mot de passe si le transfert est protégé"), downloader: dict | None = Depends(get_optional_user)):
-    rows, sender_email, transfer_name = _download_file_rows(token, password)
+    rows, sender_email, transfer_name, should_notify = _download_file_rows(token, password)
 
     if len(rows) <= 1:
         raise HTTPException(status_code=400, detail="Zip download requires at least 2 files")
@@ -925,7 +949,8 @@ def download_transfer_zip(token: str, password: str | None = Query(default=None,
 
     def _cleanup_and_notify(path: str):
         _cleanup_file(path)
-        send_download_notification(sender_email, token, transfer_name, filenames, total_bytes, downloader_email)
+        if should_notify:
+            send_download_notification(sender_email, token, transfer_name, filenames, total_bytes, downloader_email)
 
     return FileResponse(
         zip_path,

@@ -30,6 +30,17 @@ export function getStem(name: string): string {
   return i > 0 ? name.slice(0, i) : name
 }
 
+export async function runWithConcurrency(tasks: (() => Promise<void>)[], limit: number): Promise<void> {
+  let next = 0
+  async function worker() {
+    while (next < tasks.length) {
+      const i = next++
+      await tasks[i]()
+    }
+  }
+  await Promise.all(Array.from({ length: Math.min(limit, tasks.length) }, worker))
+}
+
 export type FileCategory = 'image' | 'video' | 'audio' | 'pdf' | 'text' | 'code' | 'other'
 
 export function getFileCategory(file: File): FileCategory {
