@@ -885,3 +885,14 @@ body {
 .items-center { align-items: center; }
 .gap-2 { gap: 8px; }
 .justify-between { justify-content: space-between; }
+
+/* ── iOS : empêcher le zoom auto au focus des champs (police ≥ 16px) ── */
+@media (hover: none) and (pointer: coarse) {
+  input, select, textarea,
+  .field input, .field select,
+  .chip-popover select, .chip-popover input,
+  .history-search-bar input,
+  .file-name-input {
+    font-size: 16px;
+  }
+}
