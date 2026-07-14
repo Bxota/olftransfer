@@ -71,6 +71,26 @@ class PartUrlResponse(BaseModel):
     url: str
 
 
+class PartUrlsRequest(BaseModel):
+    upload_id: str = Field(description="ID de l'upload multipart S3")
+    part_numbers: list[int] = Field(
+        min_length=1, max_length=10000, description="Numéros des parties à signer"
+    )
+
+
+class PartUrlItem(BaseModel):
+    part_number: int
+    url: str
+
+
+class PartUrlsResponse(BaseModel):
+    urls: list[PartUrlItem]
+
+
+class PartsListResponse(BaseModel):
+    parts: list[int] = Field(description="Numéros des parties déjà uploadées")
+
+
 class CompleteUploadRequest(BaseModel):
     upload_id: str = Field(description="ID de l'upload multipart S3")
 
@@ -106,6 +126,14 @@ class CreateTransferResponse(BaseModel):
     token: str
     share_url: str
     expires_at: datetime
+    uploads: list[UploadUrl]
+
+
+class AddFilesRequest(BaseModel):
+    files: list[FileIn]
+
+
+class AddFilesResponse(BaseModel):
     uploads: list[UploadUrl]
 
 

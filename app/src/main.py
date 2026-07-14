@@ -28,6 +28,8 @@ from .db import get_conn
 from .email import send_download_notification, send_invite
 from .models import (
     AbortUploadRequest,
+    AddFilesRequest,
+    AddFilesResponse,
     BatchDeleteRequest,
     BatchDeleteResponse,
     CompleteUploadRequest,
@@ -43,8 +45,12 @@ from .models import (
     LoginRequest,
     MeResponse,
     OkResponse,
+    PartUrlItem,
     PartUrlRequest,
     PartUrlResponse,
+    PartUrlsRequest,
+    PartUrlsResponse,
+    PartsListResponse,
     PatchTransferRequest,
     PendingTransferInfo,
     RegisterRequest,
@@ -586,6 +592,66 @@ def create_transfer(body: CreateTransferRequest, request: Request, user: dict = 
     )
 
 
+@app.post("/transfers/{token}/files", tags=["Transfers"], summary="Ajouter des fichiers à un transfert non confirmé", response_model=AddFilesResponse)
+def add_files_to_transfer(token: str, body: AddFilesRequest, user: dict = Depends(get_current_user)):
+    requested_bytes = sum(f.size_bytes for f in body.files)
+
+    with get_conn() as conn:
+        cur = conn.cursor()
+        # Confirmé ou non : on peut alimenter un transfert tant qu'il est vivant
+        # (non expiré, non purgé, non archivé au froid).
+        cur.execute(
+            """
+            SELECT id FROM transfers
+            WHERE token = %s AND user_id = %s AND expires_at > NOW()
+              AND files_purged_at IS NULL AND archived_at IS NULL
+            """,
+            (token, user["id"]),
+        )
+        row = cur.fetchone()
+        if not row:
+            raise HTTPException(status_code=404, detail="Transfert introuvable ou indisponible.")
+        transfer_id = row[0]
+
+        # Quota : espace confirmé + fichiers déjà en attente sur ce transfert + nouveaux
+        cur.execute(
+            """
+            SELECT COALESCE(SUM(f.size_bytes), 0)
+            FROM files f
+            JOIN transfers t ON f.transfer_id = t.id
+            WHERE t.user_id = %s AND t.confirmed_at IS NOT NULL AND t.files_purged_at IS NULL
+            """,
+            (user["id"],),
+        )
+        used_bytes = int(cur.fetchone()[0])
+        cur.execute("SELECT COALESCE(SUM(size_bytes), 0) FROM files WHERE transfer_id = %s", (transfer_id,))
+        pending_bytes = int(cur.fetchone()[0])
+        if used_bytes + pending_bytes + requested_bytes > user["storage_quota_bytes"]:
+            raise HTTPException(
+                status_code=507,
+                detail=f"Quota de stockage dépassé ({_fmt_bytes(used_bytes + pending_bytes + requested_bytes)} / {_fmt_bytes(user['storage_quota_bytes'])})",
+            )
+
+        uploads = []
+        for f in body.files:
+            storage_key = f"{transfer_id}/{secrets.token_hex(8)}_{f.filename}"
+            mp_upload_id = create_multipart_upload(storage_key, f.mime_type) if f.size_bytes >= MULTIPART_THRESHOLD else None
+            cur.execute(
+                """
+                INSERT INTO files (transfer_id, filename, size_bytes, mime_type, storage_key, multipart_upload_id)
+                VALUES (%s, %s, %s, %s, %s, %s) RETURNING id
+                """,
+                (transfer_id, f.filename, f.size_bytes, f.mime_type, storage_key, mp_upload_id),
+            )
+            file_id = cur.fetchone()[0]
+            if mp_upload_id:
+                uploads.append(UploadUrl(file_id=str(file_id), filename=f.filename, multipart_upload_id=mp_upload_id))
+            else:
+                uploads.append(UploadUrl(file_id=str(file_id), filename=f.filename, upload_url=presigned_upload_url(storage_key, f.mime_type)))
+
+    return AddFilesResponse(uploads=uploads)
+
+
 @app.post("/transfers/{token}/confirm", tags=["Transfers"], summary="Confirmer un transfert")
 def confirm_transfer(token: str, body: ConfirmTransferRequest, user: dict = Depends(get_current_user)):
     with get_conn() as conn:
@@ -962,8 +1028,8 @@ def download_transfer_zip(token: str, password: str | None = Query(default=None,
 
 # ── Uploads ───────────────────────────────────────────────────────────────────
 
-@app.post("/uploads/{file_id}/part-url", tags=["Uploads"], summary="Obtenir l'URL presignée d'une partie multipart", response_model=PartUrlResponse)
-def get_part_url(file_id: str, body: PartUrlRequest, user: dict = Depends(get_current_user)):
+def _authed_file_key(file_id: str, user: dict) -> str:
+    """storage_key d'un fichier appartenant à l'utilisateur connecté (sinon 404)."""
     with get_conn() as conn:
         cur = conn.cursor()
         cur.execute(
@@ -973,35 +1039,66 @@ def get_part_url(file_id: str, body: PartUrlRequest, user: dict = Depends(get_cu
         row = cur.fetchone()
     if not row:
         raise HTTPException(status_code=404)
-    return PartUrlResponse(url=presigned_upload_part(row[0], body.upload_id, body.part_number))
+    return row[0]
+
+
+def _request_file_key(req_token: str, transfer_token: str, file_id: str) -> str:
+    """storage_key d'un fichier d'un dépôt anonyme, autorisé par la possession
+    des deux tokens (demande + transfert), sur un transfert non confirmé et non expiré."""
+    with get_conn() as conn:
+        cur = conn.cursor()
+        cur.execute(
+            """
+            SELECT f.storage_key FROM files f
+            JOIN transfers t ON f.transfer_id = t.id
+            WHERE f.id = %s AND t.token = %s AND t.file_request_token = %s
+              AND t.confirmed_at IS NULL AND t.expires_at > NOW()
+            """,
+            (file_id, transfer_token, req_token),
+        )
+        row = cur.fetchone()
+    if not row:
+        raise HTTPException(status_code=404)
+    return row[0]
+
+
+def _part_urls(storage_key: str, upload_id: str, part_numbers: list[int]) -> PartUrlsResponse:
+    return PartUrlsResponse(
+        urls=[
+            PartUrlItem(part_number=n, url=presigned_upload_part(storage_key, upload_id, n))
+            for n in part_numbers
+        ]
+    )
+
+
+@app.post("/uploads/{file_id}/part-url", tags=["Uploads"], summary="Obtenir l'URL presignée d'une partie multipart", response_model=PartUrlResponse)
+def get_part_url(file_id: str, body: PartUrlRequest, user: dict = Depends(get_current_user)):
+    storage_key = _authed_file_key(file_id, user)
+    return PartUrlResponse(url=presigned_upload_part(storage_key, body.upload_id, body.part_number))
+
+
+@app.post("/uploads/{file_id}/part-urls", tags=["Uploads"], summary="Obtenir les URLs presignées de plusieurs parties (batch)", response_model=PartUrlsResponse)
+def get_part_urls(file_id: str, body: PartUrlsRequest, user: dict = Depends(get_current_user)):
+    storage_key = _authed_file_key(file_id, user)
+    return _part_urls(storage_key, body.upload_id, body.part_numbers)
+
+
+@app.get("/uploads/{file_id}/parts", tags=["Uploads"], summary="Lister les parties déjà uploadées (reprise)", response_model=PartsListResponse)
+def get_uploaded_parts(file_id: str, upload_id: str = Query(...), user: dict = Depends(get_current_user)):
+    storage_key = _authed_file_key(file_id, user)
+    return PartsListResponse(parts=list_upload_parts(storage_key, upload_id))
 
 
 @app.post("/uploads/{file_id}/complete", tags=["Uploads"], summary="Finaliser un upload multipart", status_code=204)
 def complete_upload(file_id: str, body: CompleteUploadRequest, user: dict = Depends(get_current_user)):
-    with get_conn() as conn:
-        cur = conn.cursor()
-        cur.execute(
-            "SELECT f.storage_key FROM files f JOIN transfers t ON f.transfer_id = t.id WHERE f.id = %s AND t.user_id = %s",
-            (file_id, user["id"]),
-        )
-        row = cur.fetchone()
-    if not row:
-        raise HTTPException(status_code=404)
-    complete_multipart_upload(row[0], body.upload_id)
+    storage_key = _authed_file_key(file_id, user)
+    complete_multipart_upload(storage_key, body.upload_id)
 
 
 @app.post("/uploads/{file_id}/abort", tags=["Uploads"], summary="Annuler un upload multipart", status_code=204)
 def abort_upload(file_id: str, body: AbortUploadRequest, user: dict = Depends(get_current_user)):
-    with get_conn() as conn:
-        cur = conn.cursor()
-        cur.execute(
-            "SELECT f.storage_key FROM files f JOIN transfers t ON f.transfer_id = t.id WHERE f.id = %s AND t.user_id = %s",
-            (file_id, user["id"]),
-        )
-        row = cur.fetchone()
-    if not row:
-        raise HTTPException(status_code=404)
-    abort_multipart_upload(row[0], body.upload_id)
+    storage_key = _authed_file_key(file_id, user)
+    abort_multipart_upload(storage_key, body.upload_id)
 
 
 # ── File Requests (reverse transfer) ─────────────────────────────────────────
@@ -1144,6 +1241,26 @@ def confirm_transfer_for_request(req_token: str, transfer_token: str):
             raise HTTPException(status_code=404, detail="Transfert introuvable.")
         cur.execute("UPDATE transfers SET confirmed_at = NOW() WHERE id = %s", (row[0],))
     return {"ok": True}
+
+
+# ── Uploads multipart pour dépôts anonymes (autorisés par req_token + transfer_token) ──
+
+@app.post("/requests/{req_token}/transfers/{transfer_token}/uploads/{file_id}/part-urls", tags=["Requests"], summary="URLs presignées de parties (dépôt anonyme)", response_model=PartUrlsResponse)
+def get_part_urls_for_request(req_token: str, transfer_token: str, file_id: str, body: PartUrlsRequest):
+    storage_key = _request_file_key(req_token, transfer_token, file_id)
+    return _part_urls(storage_key, body.upload_id, body.part_numbers)
+
+
+@app.get("/requests/{req_token}/transfers/{transfer_token}/uploads/{file_id}/parts", tags=["Requests"], summary="Parties déjà uploadées (dépôt anonyme)", response_model=PartsListResponse)
+def get_uploaded_parts_for_request(req_token: str, transfer_token: str, file_id: str, upload_id: str = Query(...)):
+    storage_key = _request_file_key(req_token, transfer_token, file_id)
+    return PartsListResponse(parts=list_upload_parts(storage_key, upload_id))
+
+
+@app.post("/requests/{req_token}/transfers/{transfer_token}/uploads/{file_id}/complete", tags=["Requests"], summary="Finaliser un upload multipart (dépôt anonyme)", status_code=204)
+def complete_upload_for_request(req_token: str, transfer_token: str, file_id: str, body: CompleteUploadRequest):
+    storage_key = _request_file_key(req_token, transfer_token, file_id)
+    complete_multipart_upload(storage_key, body.upload_id)
 
 
 # ── SPA fallback (must be last) ───────────────────────────────────────────────

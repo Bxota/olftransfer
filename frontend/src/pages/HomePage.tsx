@@ -14,6 +14,7 @@ import TrashIcon from '../icons/trash-icon'
 import RefreshIcon from '../icons/refresh-icon'
 import type { AnimatedIconHandle } from '../icons/types'
 import { formatBytes, formatSize, formatDate, getExt, getStem, getFileCategory, runWithConcurrency, FileCategory } from '../lib/utils'
+import { CHUNK_SIZE, UPLOAD_CONCURRENCY, MultipartEndpoints, uploadMultipart, uploadSingle } from '../lib/upload'
 import { PreviewModal, PreviewKind } from '../components/PreviewModal'
 
 // ── Types ────────────────────────────────────────────────────────────────────
@@ -29,9 +30,6 @@ interface FileProgress { pct: number; done: boolean }
 interface VirusWarning { filename: string; virus: string }
 
 // ── Upload session (localStorage) ───────────────────────────────────────────
-
-const CHUNK_SIZE = 100 * 1024 * 1024
-const UPLOAD_CONCURRENCY = 3
 
 interface MpFile { file_id: string; filename: string; upload_id: string; total_parts: number; completed_parts: number[] }
 interface MpSession { token: string; share_url: string; files: MpFile[] }
@@ -59,108 +57,70 @@ function updateSessionProgress(fileId: string, completedParts: number[]) {
   if (f) { f.completed_parts = completedParts; localStorage.setItem('mp_session', JSON.stringify(s)) }
 }
 
+// Ajoute des fichiers multipart à la session de reprise d'un transfert existant.
+function appendSession(token: string, uploads: any[], files: File[]) {
+  const s = getSession()
+  if (!s || s.token !== token) return
+  uploads.forEach((u, j) => {
+    if (u.multipart_upload_id) s.files.push({
+      file_id: u.file_id, filename: u.filename, upload_id: u.multipart_upload_id,
+      total_parts: Math.ceil(files[j].size / CHUNK_SIZE), completed_parts: [],
+    })
+  })
+  localStorage.setItem('mp_session', JSON.stringify(s))
+}
+
 // ── Upload helpers ───────────────────────────────────────────────────────────
 
-function uploadFileSingle(
-  file: File, url: string, index: number,
-  setProgress: (fn: (prev: Record<number, FileProgress>) => Record<number, FileProgress>) => void,
-): Promise<void> {
-  return new Promise((resolve, reject) => {
-    const xhr = new XMLHttpRequest()
-    xhr.open('PUT', url)
-    if (file.type) xhr.setRequestHeader('Content-Type', file.type)
-    xhr.upload.onprogress = e => {
-      if (e.lengthComputable) {
-        const pct = Math.round((e.loaded / e.total) * 100)
-        setProgress(p => ({ ...p, [index]: { pct, done: false } }))
-      }
-    }
-    xhr.onload = () => {
-      if (xhr.status >= 200 && xhr.status < 300) {
-        setProgress(p => ({ ...p, [index]: { pct: 100, done: true } }))
-        resolve()
-      } else {
-        reject(new Error(`Erreur upload: ${xhr.status}`))
-      }
-    }
-    xhr.onerror = () => reject(new Error('Erreur réseau'))
-    xhr.send(file)
-  })
-}
+type SetProgress = (fn: (prev: Record<number, FileProgress>) => Record<number, FileProgress>) => void
 
-function uploadPart(
-  chunk: Blob, url: string, partNumber: number,
-  onProgress: (partNumber: number, loaded: number) => void,
-): Promise<void> {
-  return new Promise((resolve, reject) => {
-    const xhr = new XMLHttpRequest()
-    xhr.open('PUT', url)
-    xhr.upload.onprogress = e => {
-      if (e.lengthComputable) onProgress(partNumber, e.loaded)
-    }
-    xhr.onload = () => {
-      if (xhr.status >= 200 && xhr.status < 300) { onProgress(partNumber, chunk.size); resolve() }
-      else reject(new Error(`Erreur upload partie ${partNumber}: ${xhr.status}`))
-    }
-    xhr.onerror = () => reject(new Error(`Erreur réseau partie ${partNumber}`))
-    xhr.send(chunk)
-  })
-}
-
-async function uploadFileMultipart(
-  file: File, fileId: string, uploadId: string, index: number,
-  setProgress: (fn: (prev: Record<number, FileProgress>) => Record<number, FileProgress>) => void,
-) {
-  const totalParts = Math.ceil(file.size / CHUNK_SIZE)
-  const session = getSession()
-  const sessionFile = session?.files?.find(f => f.file_id === String(fileId))
-  let completedParts: number[] = sessionFile?.completed_parts ?? []
-
-  // Progression par octets pour supporter les parts uploadées en parallèle
-  const loadedByPart: Record<number, number> = {}
-  completedParts.forEach(pn => {
-    loadedByPart[pn] = Math.min(CHUNK_SIZE, file.size - (pn - 1) * CHUNK_SIZE)
-  })
-  function reportProgress(partNumber: number, loaded: number) {
-    loadedByPart[partNumber] = loaded
-    const totalLoaded = Object.values(loadedByPart).reduce((a, b) => a + b, 0)
-    const pct = Math.min(99, Math.round((totalLoaded / file.size) * 100))
-    setProgress(p => ({ ...p, [index]: { pct, done: false } }))
-  }
-  if (completedParts.length > 0) reportProgress(completedParts[0], loadedByPart[completedParts[0]])
-
-  const partTasks: (() => Promise<void>)[] = []
-  for (let partNumber = 1; partNumber <= totalParts; partNumber++) {
-    if (completedParts.includes(partNumber)) continue
-    partTasks.push(async () => {
-      const urlRes = await fetch(`/uploads/${fileId}/part-url`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ upload_id: uploadId, part_number: partNumber }),
-      })
-      if (!urlRes.ok) throw new Error(`Impossible d'obtenir l'URL de la partie ${partNumber}`)
-      const { url } = await urlRes.json()
-      const start = (partNumber - 1) * CHUNK_SIZE
-      await uploadPart(file.slice(start, start + CHUNK_SIZE), url, partNumber, reportProgress)
-      completedParts = [...completedParts, partNumber]
-      updateSessionProgress(fileId, completedParts)
+// Endpoints d'upload authentifiés (utilisateur connecté).
+const authedEndpoints: MultipartEndpoints = {
+  async listParts(fileId, uploadId) {
+    const r = await fetch(`/uploads/${fileId}/parts?upload_id=${encodeURIComponent(uploadId)}`)
+    if (!r.ok) return []
+    return (await r.json()).parts
+  },
+  async partUrls(fileId, uploadId, partNumbers) {
+    const r = await fetch(`/uploads/${fileId}/part-urls`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ upload_id: uploadId, part_numbers: partNumbers }),
     })
-  }
-  await runWithConcurrency(partTasks, UPLOAD_CONCURRENCY)
+    if (!r.ok) throw new Error("Impossible d'obtenir les URLs des parties")
+    const data = await r.json()
+    return Object.fromEntries(data.urls.map((u: any) => [u.part_number, u.url]))
+  },
+  async complete(fileId, uploadId) {
+    const r = await fetch(`/uploads/${fileId}/complete`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ upload_id: uploadId }),
+    })
+    if (!r.ok) throw new Error("Erreur lors de la finalisation de l'upload")
+  },
+}
 
-  const completeRes = await fetch(`/uploads/${fileId}/complete`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ upload_id: uploadId }),
+async function uploadFileSingle(file: File, url: string, index: number, setProgress: SetProgress) {
+  await uploadSingle(file, url, (loaded, total) => {
+    const pct = Math.round((loaded / total) * 100)
+    setProgress(p => ({ ...p, [index]: { pct, done: false } }))
   })
-  if (!completeRes.ok) throw new Error("Erreur lors de la finalisation de l'upload")
   setProgress(p => ({ ...p, [index]: { pct: 100, done: true } }))
 }
 
-function uploadFile(
-  file: File, uploadInfo: any, index: number,
-  setProgress: (fn: (prev: Record<number, FileProgress>) => Record<number, FileProgress>) => void,
-) {
+async function uploadFileMultipart(file: File, fileId: string, uploadId: string, index: number, setProgress: SetProgress) {
+  const sessionFile = getSession()?.files?.find(f => f.file_id === String(fileId))
+  await uploadMultipart(file, String(fileId), uploadId, authedEndpoints, {
+    localCompleted: sessionFile?.completed_parts ?? [],
+    onPartComplete: parts => updateSessionProgress(fileId, parts),
+    onProgress: (loaded, total) => {
+      const pct = Math.min(99, Math.round((loaded / total) * 100))
+      setProgress(p => ({ ...p, [index]: { pct, done: false } }))
+    },
+  })
+  setProgress(p => ({ ...p, [index]: { pct: 100, done: true } }))
+}
+
+function uploadFile(file: File, uploadInfo: any, index: number, setProgress: SetProgress) {
   if (uploadInfo.multipart_upload_id)
     return uploadFileMultipart(file, uploadInfo.file_id, uploadInfo.multipart_upload_id, index, setProgress)
   return uploadFileSingle(file, uploadInfo.upload_url, index, setProgress)
@@ -217,6 +177,12 @@ export default function HomePage() {
   const [resumeBanner, setResumeBanner] = useState({ show: false, info: '', error: '' })
   const pendingTransferRef = useRef<any>(null)
 
+  // Transfert actif : permet d'ajouter des fichiers sans le recréer (avant ou après confirmation).
+  const inFlightRef = useRef(0)
+  const confirmingRef = useRef(false)
+  const activeTransferRef = useRef<{ token: string; nextIndex: number; confirmed: boolean } | null>(null)
+  const [transferActive, setTransferActive] = useState(false)
+
   // History
   const [history, setHistory] = useState<HistoryTransfer[]>([])
   const [selectedTokens, setSelectedTokens] = useState<Set<string>>(new Set())
@@ -272,7 +238,10 @@ export default function HomePage() {
       const dropped = e.dataTransfer?.files
       if (dropped && dropped.length > 0) {
         const s = stateRef.current
-        if (!s.uploading && !s.creating) {
+        if (activeTransferRef.current) {
+          // Transfert actif (en cours ou terminé) : on ajoute au lieu de recréer.
+          addMoreFiles([...dropped])
+        } else if (!s.creating) {
           handleNewFilesWithState([...dropped], s.files, s.fileNames)
         }
       }
@@ -354,6 +323,10 @@ export default function HomePage() {
     Object.values(thumbUrlsRef.current).forEach(u => URL.revokeObjectURL(u))
     thumbUrlsRef.current = {}
     setThumbVersion(v => v + 1)
+    activeTransferRef.current = null
+    inFlightRef.current = 0
+    confirmingRef.current = false
+    setTransferActive(false)
     setFiles([])
     setFileNames([])
     setShareToken('')
@@ -486,6 +459,47 @@ export default function HomePage() {
 
   // ── Start transfer ────────────────────────────────────────────────────────
 
+  // Lance un lot d'uploads en suivant le nombre en vol. Auto-confirme quand
+  // plus rien n'est en cours (batch initial + ajouts éventuels).
+  async function launchUploads(items: { file: File; info: any; index: number }[]) {
+    inFlightRef.current += items.length
+    await runWithConcurrency(
+      items.map(it => async () => {
+        try { await uploadFile(it.file, it.info, it.index, setProgress) }
+        finally { inFlightRef.current-- }
+      }),
+      UPLOAD_CONCURRENCY,
+    )
+    if (inFlightRef.current === 0) {
+      const active = activeTransferRef.current
+      if (active && !active.confirmed) await finalizeTransfer()
+      else setUploading(false) // transfert déjà confirmé : fin de l'ajout
+    }
+  }
+
+  async function finalizeTransfer() {
+    const active = activeTransferRef.current
+    // Rien à faire si déjà confirmé, confirmation en cours, ou uploads encore en vol.
+    if (!active || active.confirmed || confirmingRef.current || inFlightRef.current > 0) return
+    confirmingRef.current = true
+    try {
+      const confirmRes = await fetch(`/transfers/${active.token}/confirm`, {
+        method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({}),
+      })
+      if (!confirmRes.ok) throw new Error(await confirmRes.json().then((d: any) => d.detail).catch(() => 'Erreur'))
+
+      active.confirmed = true
+      clearSession()
+      setUploading(false)
+      loadHistory()
+    } catch (err: any) {
+      setSendError(err.message)
+      setUploading(false)
+    } finally {
+      confirmingRef.current = false
+    }
+  }
+
   async function startTransfer(filesToSend: File[], namesToSend: string[]) {
     if (filesToSend.length === 0) return
     setSendError('')
@@ -517,35 +531,67 @@ export default function HomePage() {
       setChipExpiry(expiry)
       setChipPassword(transferPassword)
       setChipMaxDl(maxDownloads)
+      activeTransferRef.current = { token: transfer.token, nextIndex: filesToSend.length, confirmed: false }
+      setTransferActive(true)
       setCreating(false)
       setUploading(true)
 
-      await runWithConcurrency(
-        filesToSend.map((f, i) => () => uploadFile(f, transfer.uploads[i], i, setProgress)),
-        UPLOAD_CONCURRENCY,
-      )
-
-      let confirmRes = await fetch(`/transfers/${transfer.token}/confirm`, {
-        method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({}),
-      })
-      if (confirmRes.status === 202) {
-        const warn = await confirmRes.json()
-        const ack = await showVirusWarning(warn.filename, warn.virus)
-        if (!ack) throw new Error('Transfert annulé.')
-        confirmRes = await fetch(`/transfers/${transfer.token}/confirm`, {
-          method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ acknowledge_risk: true }),
-        })
-      }
-      if (!confirmRes.ok) throw new Error(await confirmRes.json().then((d: any) => d.detail).catch(() => 'Erreur'))
-
-      clearSession()
-      setUploading(false)
-      loadHistory()
+      await launchUploads(filesToSend.map((f, i) => ({ file: f, info: transfer.uploads[i], index: i })))
     } catch (err: any) {
       setCreating(false)
       setUploading(false)
       setSendError(err.message)
     }
+  }
+
+  // Ajoute des fichiers au transfert en cours (non confirmé) sans le recréer.
+  async function addMoreFiles(newFiles: File[]) {
+    const active = activeTransferRef.current
+    if (!active) {
+      // Aucun transfert à alimenter → nouveau transfert.
+      handleNewFiles(newFiles)
+      return
+    }
+    setUploading(true) // ré-affiche la progression (cas d'un transfert déjà confirmé)
+    const startIndex = active.nextIndex
+    active.nextIndex += newFiles.length
+
+    const names = newFiles.map(f => getStem(f.name))
+    newFiles.forEach((f, j) => {
+      const idx = startIndex + j
+      if (getFileCategory(f) === 'image') thumbUrlsRef.current[idx] = URL.createObjectURL(f)
+    })
+    setThumbVersion(v => v + 1)
+    setFiles(prev => [...prev, ...newFiles])
+    setFileNames(prev => [...prev, ...names])
+
+    try {
+      const res = await fetch(`/transfers/${active.token}/files`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          files: newFiles.map((f, j) => ({
+            filename: (names[j].trim() || getStem(f.name)) + getExt(f.name),
+            size_bytes: f.size,
+            mime_type: f.type || null,
+          })),
+        }),
+      })
+      if (!res.ok) throw new Error((await res.json()).detail || 'Erreur serveur')
+      const data = await res.json()
+      appendSession(active.token, data.uploads, newFiles)
+      await launchUploads(newFiles.map((f, j) => ({ file: f, info: data.uploads[j], index: startIndex + j })))
+    } catch (err: any) {
+      setSendError(err.message)
+    }
+  }
+
+  function triggerAddFiles() {
+    const input = document.createElement('input')
+    input.type = 'file'
+    input.multiple = true
+    input.onchange = () => { if (input.files && input.files.length) addMoreFiles([...input.files]) }
+    input.click()
   }
 
   // ── History ───────────────────────────────────────────────────────────────
@@ -899,6 +945,12 @@ export default function HomePage() {
                       </div>
                     )}
                   </div>
+
+                  {transferActive && (
+                    <button className="chip chip-inactive" onClick={triggerAddFiles}>
+                      ＋ Ajouter des fichiers
+                    </button>
+                  )}
 
                   {!uploading && !creating && (
                     <button className="chip chip-inactive" onClick={() => { resetTransfer(); setTimeout(() => document.getElementById('fileInput')?.click(), 50) }}>

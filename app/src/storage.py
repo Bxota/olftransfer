@@ -130,6 +130,10 @@ def create_multipart_upload(object_key: str, mime_type: str | None) -> str:
     params = {"Bucket": _bucket(), "Key": object_key}
     if mime_type:
         params["ContentType"] = mime_type
+    # OVH High Performance (NVMe) : mappé sur la classe AWS EXPRESS_ONEZONE.
+    # Gate sur le prod uniquement — MinIO local ne connaît pas cette classe.
+    if not _is_local():
+        params["StorageClass"] = "EXPRESS_ONEZONE"
     return get_client().create_multipart_upload(**params)["UploadId"]
 
 

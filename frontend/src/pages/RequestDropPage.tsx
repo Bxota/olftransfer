@@ -1,6 +1,7 @@
 import { ChangeEvent, DragEvent, useEffect, useRef, useState } from 'react'
 import { Link, useParams } from 'react-router-dom'
 import { formatSize } from '../lib/utils'
+import { MultipartEndpoints, uploadMultipart, uploadSingle } from '../lib/upload'
 import { QrPopover } from '../components/QrPopover'
 
 interface RequestInfo {
@@ -19,8 +20,6 @@ interface UploadedFile {
 }
 
 type PageState = 'loading' | 'error' | 'form' | 'uploading' | 'done'
-
-const CHUNK_SIZE = 100 * 1024 * 1024
 
 export default function RequestDropPage() {
   const { token } = useParams<{ token: string }>()
@@ -80,13 +79,45 @@ export default function RequestDropPage() {
       const uploadedState: UploadedFile[] = files.map(f => ({ name: f.name, size: f.size, done: false, pct: 0 }))
       setUploaded([...uploadedState])
 
+      const base = `/requests/${token}/transfers/${transfer.token}/uploads`
+      const endpoints: MultipartEndpoints = {
+        async listParts(fileId, uploadId) {
+          const r = await fetch(`${base}/${fileId}/parts?upload_id=${encodeURIComponent(uploadId)}`)
+          if (!r.ok) return []
+          return (await r.json()).parts
+        },
+        async partUrls(fileId, uploadId, partNumbers) {
+          const r = await fetch(`${base}/${fileId}/part-urls`, {
+            method: 'POST', headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ upload_id: uploadId, part_numbers: partNumbers }),
+          })
+          if (!r.ok) throw new Error("Impossible d'obtenir les URLs des parties")
+          return Object.fromEntries((await r.json()).urls.map((u: any) => [u.part_number, u.url]))
+        },
+        async complete(fileId, uploadId) {
+          const r = await fetch(`${base}/${fileId}/complete`, {
+            method: 'POST', headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ upload_id: uploadId }),
+          })
+          if (!r.ok) throw new Error("Erreur lors de la finalisation de l'upload")
+        },
+      }
+
+      const onProgress = (i: number, cap: number) => (loaded: number, total: number) => {
+        uploadedState[i].pct = Math.min(cap, Math.round((loaded / total) * 100))
+        setUploaded([...uploadedState])
+      }
+
       for (let i = 0; i < files.length; i++) {
         const uploadInfo = transfer.uploads[i]
         if (uploadInfo.multipart_upload_id) {
-          await uploadMultipart(files[i], uploadInfo.file_id, uploadInfo.multipart_upload_id, i, uploadedState)
+          await uploadMultipart(files[i], uploadInfo.file_id, uploadInfo.multipart_upload_id, endpoints, { onProgress: onProgress(i, 99) })
         } else {
-          await uploadSingle(files[i], uploadInfo.upload_url, i, uploadedState)
+          await uploadSingle(files[i], uploadInfo.upload_url, onProgress(i, 100))
         }
+        uploadedState[i].done = true
+        uploadedState[i].pct = 100
+        setUploaded([...uploadedState])
       }
 
       await fetch(`/requests/${token}/transfers/${transfer.token}/confirm`, {
@@ -98,55 +129,6 @@ export default function RequestDropPage() {
       setError(e.message)
       setState('form')
     }
-  }
-
-  async function uploadSingle(file: File, url: string, index: number, state: UploadedFile[]) {
-    return new Promise<void>((resolve, reject) => {
-      const xhr = new XMLHttpRequest()
-      xhr.open('PUT', url)
-      if (file.type) xhr.setRequestHeader('Content-Type', file.type)
-      xhr.upload.onprogress = e => {
-        if (e.lengthComputable) {
-          state[index].pct = Math.round((e.loaded / e.total) * 100)
-          setUploaded([...state])
-        }
-      }
-      xhr.onload = () => {
-        if (xhr.status >= 200 && xhr.status < 300) { state[index].done = true; state[index].pct = 100; setUploaded([...state]); resolve() }
-        else reject(new Error(`Erreur upload: ${xhr.status}`))
-      }
-      xhr.onerror = () => reject(new Error('Erreur réseau'))
-      xhr.send(file)
-    })
-  }
-
-  async function uploadMultipart(file: File, fileId: string, uploadId: string, index: number, state: UploadedFile[]) {
-    const totalParts = Math.ceil(file.size / CHUNK_SIZE)
-    for (let part = 1; part <= totalParts; part++) {
-      const urlRes = await fetch(`/uploads/${fileId}/part-url`, {
-        method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ upload_id: uploadId, part_number: part }),
-      })
-      const { url } = await urlRes.json()
-      const start = (part - 1) * CHUNK_SIZE
-      await new Promise<void>((resolve, reject) => {
-        const xhr = new XMLHttpRequest()
-        xhr.open('PUT', url)
-        xhr.upload.onprogress = e => {
-          if (e.lengthComputable) {
-            state[index].pct = Math.round(((part - 1 + e.loaded / e.total) / totalParts) * 100)
-            setUploaded([...state])
-          }
-        }
-        xhr.onload = () => xhr.status >= 200 && xhr.status < 300 ? resolve() : reject(new Error(`Erreur partie ${part}`))
-        xhr.onerror = () => reject(new Error('Erreur réseau'))
-        xhr.send(file.slice(start, start + CHUNK_SIZE))
-      })
-    }
-    await fetch(`/uploads/${fileId}/complete`, {
-      method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ upload_id: uploadId }),
-    })
-    state[index].done = true; state[index].pct = 100; setUploaded([...state])
   }
 
   return (
