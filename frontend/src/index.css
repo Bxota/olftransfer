@@ -726,6 +726,21 @@ body {
 }
 
 /* ── Recipient gallery ── */
+.recipient-primary-actions { display: flex; gap: 8px; margin-bottom: 22px; align-items: stretch; }
+.recipient-download-all, .save-photos-btn {
+  flex: 1; border-radius: 11px; box-shadow: 0 4px 14px rgba(13,148,136,.25);
+  font-size: 16px; font-weight: 700; padding: 16px 22px;
+}
+.recipient-download-icon {
+  width: 56px; flex: 0 0 56px; display: grid; place-items: center;
+  border: 1px solid var(--border); border-radius: 11px; background: white;
+  color: var(--subtext); cursor: pointer; transition: color .18s, border-color .18s, background .18s, transform .12s;
+}
+.recipient-download-icon:hover { color: var(--primary); border-color: #9fd8d0; background: var(--primary-light); }
+.recipient-download-icon:active { transform: scale(.97); }
+.recipient-download-icon:focus-visible { outline: 3px solid rgba(13,148,136,.2); outline-offset: 2px; }
+.recipient-download-icon:disabled { cursor: not-allowed; opacity: .7; }
+.photo-save-error { margin: -10px 0 18px; }
 .files-section-header { display: flex; align-items: center; justify-content: space-between; margin-bottom: 10px; }
 .files-section-header .section-label { margin: 0; }
 .view-toggle { display: inline-flex; padding: 2px; gap: 2px; border: 1px solid var(--border); border-radius: 8px; background: var(--bg); }

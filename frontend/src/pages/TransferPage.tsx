@@ -39,6 +39,21 @@ function isImageFile(filename: string): boolean {
   return /\.(jpe?g|png|gif|webp|svg|avif|heic)$/i.test(filename)
 }
 
+function isPhotoFile(filename: string): boolean {
+  return /\.(jpe?g|png|gif|webp|avif|heic|heif|tiff?)$/i.test(filename)
+}
+
+function supportsMobilePhotoShare(): boolean {
+  if (typeof window === 'undefined' || !window.matchMedia('(pointer: coarse)').matches) return false
+  if (typeof navigator.share !== 'function' || typeof navigator.canShare !== 'function') return false
+  try {
+    const probe = new File([''], 'photo.jpg', { type: 'image/jpeg' })
+    return navigator.canShare({ files: [probe] })
+  } catch {
+    return false
+  }
+}
+
 function isVideoFile(filename: string): boolean {
   return /\.(mp4|webm|mov|mkv|avi)$/i.test(filename)
 }
@@ -77,6 +92,9 @@ export default function TransferPage() {
   const [previewLoading, setPreviewLoading] = useState<number | null>(null)
   const [previewFiles, setPreviewFiles] = useState<{ filename: string; download_url: string }[]>([])
   const [displayMode, setDisplayMode] = useState<'gallery' | 'list' | null>(null)
+  const [photoShareFiles, setPhotoShareFiles] = useState<File[] | null>(null)
+  const [savingPhotos, setSavingPhotos] = useState(false)
+  const [photoSaveError, setPhotoSaveError] = useState('')
 
   // Download in-flight (anti spam-click)
   const [downloadingAll, setDownloadingAll] = useState(false)
@@ -88,12 +106,51 @@ export default function TransferPage() {
     if (state !== 'ready' || !transfer || previewFiles.length > 0) return
     const preferredMode = transfer.view_mode === 'gallery'
       || (transfer.view_mode === 'auto' && transfer.files.some(file => isGalleryFile(file.filename)))
-    if (preferredMode) void getPreviewUrls()
+    const needsPhotoShare = transfer.files.length > 0
+      && transfer.files.every(file => isPhotoFile(file.filename))
+      && transfer.files.length <= 50
+      && transfer.files.reduce((total, file) => total + file.size_bytes, 0) <= 150 * 1024 * 1024
+      && supportsMobilePhotoShare()
+    if (preferredMode || needsPhotoShare) void getPreviewUrls()
   }, [state, transfer, previewFiles.length])
+
+  useEffect(() => {
+    if (photoShareFiles) return
+    if (state !== 'ready' || !transfer || previewFiles.length !== transfer.files.length) return
+    if (!supportsMobilePhotoShare() || !transfer.files.every(file => isPhotoFile(file.filename))) return
+    if (transfer.files.length > 50 || transfer.files.reduce((total, file) => total + file.size_bytes, 0) > 150 * 1024 * 1024) return
+
+    const controller = new AbortController()
+    let cancelled = false
+
+    async function preparePhotos() {
+      try {
+        const files = await Promise.all(previewFiles.map(async (preview, index) => {
+          const response = await fetch(preview.download_url, { signal: controller.signal })
+          if (!response.ok) throw new Error('Image inaccessible')
+          const blob = await response.blob()
+          const type = blob.type || transfer?.files[index].mime_type || 'image/jpeg'
+          return new File([blob], preview.filename, { type })
+        }))
+        if (!cancelled && navigator.canShare({ files })) setPhotoShareFiles(files)
+      } catch (error) {
+        if (!cancelled && !(error instanceof DOMException && error.name === 'AbortError')) setPhotoShareFiles(null)
+      }
+    }
+
+    void preparePhotos()
+    return () => {
+      cancelled = true
+      controller.abort()
+    }
+  }, [state, transfer, previewFiles])
 
   function closePreview() { setPreviewUrl(null); setPreviewFilename(null); setPreviewIndex(null) }
 
   async function loadTransfer() {
+    setPhotoShareFiles(null)
+    setPreviewFiles([])
+    setPhotoSaveError('')
     try {
       const res = await fetch(`/transfers/${token}`)
       if (res.status === 404 || res.status === 410) {
@@ -179,6 +236,32 @@ export default function TransferPage() {
       }
     } finally {
       setDownloadingAll(false)
+    }
+  }
+
+  async function savePhotos() {
+    if (!photoShareFiles || savingPhotos) return
+    setPhotoSaveError('')
+    setSavingPhotos(true)
+    try {
+      await navigator.share({
+        files: photoShareFiles,
+        title: transfer?.name || 'Photos OlfTransfer',
+      })
+
+      // Le partage réussi représente un téléchargement. On enregistre l'événement
+      // après la fermeture du panneau natif afin de préserver le geste utilisateur.
+      const params = passwordRef.current ? `?password=${encodeURIComponent(passwordRef.current)}` : ''
+      const response = await fetch(`/transfers/${token}/download${params}`)
+      if (response.ok) {
+        setTransfer(current => current ? { ...current, download_count: current.download_count + 1 } : current)
+      }
+    } catch (error) {
+      if (!(error instanceof DOMException && error.name === 'AbortError')) {
+        setPhotoSaveError("Le téléphone n'a pas pu ouvrir l'enregistrement des photos.")
+      }
+    } finally {
+      setSavingPhotos(false)
     }
   }
 
@@ -312,31 +395,54 @@ export default function TransferPage() {
                     )}
                   </div>
 
-                  <div style={{ display: 'flex', gap: 8, marginBottom: 22, alignItems: 'stretch' }}>
-                  <button
-                    className="btn btn-primary"
-                    style={{ flex: 1, borderRadius: 11, boxShadow: '0 4px 14px rgba(13,148,136,.25)', fontSize: 16, fontWeight: 700, padding: '16px 22px' }}
-                    onClick={downloadAll}
-                    disabled={downloadingAll}
-                  >
-                    {downloadingAll ? (
-                      <>
-                        <span className="btn-spinner" aria-hidden="true" />
-                        Préparation du téléchargement…
-                      </>
-                    ) : (
-                      <>
-                        <svg width="19" height="19" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.4">
-                          <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" />
-                          <polyline points="7 10 12 15 17 10" />
-                          <line x1="12" y1="15" x2="12" y2="3" />
-                        </svg>
-                        Tout télécharger · {formatSize(totalSize)}
-                      </>
-                    )}
-                  </button>
+                  <div className="recipient-primary-actions">
+                  {photoShareFiles ? (
+                    <>
+                      <button className="btn btn-primary save-photos-btn" onClick={savePhotos} disabled={savingPhotos}>
+                        {savingPhotos ? (
+                          <><span className="btn-spinner" aria-hidden="true" />Ouverture de Photos…</>
+                        ) : (
+                          <>
+                            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2">
+                              <rect x="3" y="4" width="18" height="16" rx="2" />
+                              <circle cx="8.5" cy="9" r="1.5" />
+                              <path d="m21 15-5-5L5 20" />
+                              <path d="M12 7v7m-3-3 3 3 3-3" />
+                            </svg>
+                            Enregistrer dans Photos
+                          </>
+                        )}
+                      </button>
+                      <button className="recipient-download-icon" onClick={downloadAll} disabled={downloadingAll}
+                        title="Télécharger les fichiers" aria-label="Télécharger les fichiers">
+                        {downloadingAll ? <span className="btn-spinner btn-spinner--dark" aria-hidden="true" /> : (
+                          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.4">
+                            <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" />
+                            <polyline points="7 10 12 15 17 10" />
+                            <line x1="12" y1="15" x2="12" y2="3" />
+                          </svg>
+                        )}
+                      </button>
+                    </>
+                  ) : (
+                    <button className="btn btn-primary recipient-download-all" onClick={downloadAll} disabled={downloadingAll}>
+                      {downloadingAll ? (
+                        <><span className="btn-spinner" aria-hidden="true" />Préparation du téléchargement…</>
+                      ) : (
+                        <>
+                          <svg width="19" height="19" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.4">
+                            <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" />
+                            <polyline points="7 10 12 15 17 10" />
+                            <line x1="12" y1="15" x2="12" y2="3" />
+                          </svg>
+                          Tout télécharger · {formatSize(totalSize)}
+                        </>
+                      )}
+                    </button>
+                  )}
                   <QrPopover url={window.location.href} style={{ height: 'auto', width: 56, borderRadius: 11 }} />
                   </div>
+                  {photoSaveError && <div className="alert alert-error photo-save-error">{photoSaveError}</div>}
 
                   <div className="files-section-header">
                     <p className="section-label">Fichiers</p>
