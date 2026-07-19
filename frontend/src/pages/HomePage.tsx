@@ -27,7 +27,6 @@ interface HistoryTransfer {
   has_password: boolean; files: TransferFile[]
 }
 interface FileProgress { pct: number; done: boolean }
-interface VirusWarning { filename: string; virus: string }
 
 // ── Upload session (localStorage) ───────────────────────────────────────────
 
@@ -193,10 +192,6 @@ export default function HomePage() {
   const [previewFile, setPreviewFile] = useState<File | null>(null)
   const [previewUrl, setPreviewUrl] = useState<string | null>(null)
   const [previewText, setPreviewText] = useState<string | null>(null)
-
-  // Virus warning
-  const virusResolveRef = useRef<((ack: boolean) => void) | null>(null)
-  const [virusWarning, setVirusWarning] = useState<VirusWarning | null>(null)
 
   // Inline delete confirm
   const [confirmToken, setConfirmToken] = useState<string | null>(null)
@@ -364,13 +359,6 @@ export default function HomePage() {
     }
   }
 
-  function showVirusWarning(filename: string, virus: string): Promise<boolean> {
-    return new Promise(resolve => {
-      virusResolveRef.current = resolve
-      setVirusWarning({ filename, virus })
-    })
-  }
-
   // ── Resume ───────────────────────────────────────────────────────────────
 
   async function checkPendingTransfers() {
@@ -434,17 +422,9 @@ export default function HomePage() {
         UPLOAD_CONCURRENCY,
       )
 
-      let confirmRes = await fetch(`/transfers/${pending.token}/confirm`, {
+      const confirmRes = await fetch(`/transfers/${pending.token}/confirm`, {
         method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({}),
       })
-      if (confirmRes.status === 202) {
-        const warn = await confirmRes.json()
-        const ack = await showVirusWarning(warn.filename, warn.virus)
-        if (!ack) throw new Error('Transfert annulé.')
-        confirmRes = await fetch(`/transfers/${pending.token}/confirm`, {
-          method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ acknowledge_risk: true }),
-        })
-      }
       if (!confirmRes.ok) throw new Error(await confirmRes.json().then((d: any) => d.detail).catch(() => 'Erreur'))
 
       clearSession()
@@ -579,6 +559,7 @@ export default function HomePage() {
       })
       if (!res.ok) throw new Error((await res.json()).detail || 'Erreur serveur')
       const data = await res.json()
+      active.confirmed = false
       appendSession(active.token, data.uploads, newFiles)
       await launchUploads(newFiles.map((f, j) => ({ file: f, info: data.uploads[j], index: startIndex + j })))
     } catch (err: any) {
@@ -1177,37 +1158,6 @@ export default function HomePage() {
         onChange={(e: ChangeEvent<HTMLInputElement>) => {
           if (e.target.files) { handleNewFiles([...e.target.files]); e.target.value = '' }
         }} />
-
-      {virusWarning && (
-        <div className="preview-modal" role="dialog" aria-modal="true">
-          <div className="preview-backdrop" />
-          <div className="virus-modal-container">
-            <div style={{ display: 'flex', alignItems: 'center', gap: 12, marginBottom: 20 }}>
-              <div style={{ flexShrink: 0, width: 44, height: 44, background: '#FEF3C7', borderRadius: '50%', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-                <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="#D97706" strokeWidth="2.5">
-                  <path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z" />
-                  <line x1="12" y1="9" x2="12" y2="13" /><line x1="12" y1="17" x2="12.01" y2="17" />
-                </svg>
-              </div>
-              <div>
-                <p style={{ fontWeight: 600, margin: 0, fontSize: 15 }}>Fichier potentiellement dangereux</p>
-                <p style={{ color: 'var(--subtext)', fontSize: 13, margin: '4px 0 0' }}>Détecté par l'antivirus</p>
-              </div>
-            </div>
-            <div style={{ background: 'var(--bg)', border: '1px solid var(--border)', borderRadius: 8, padding: 12, marginBottom: 16 }}>
-              <p style={{ fontSize: 13, margin: '0 0 6px' }}><strong>Fichier :</strong> {virusWarning.filename}</p>
-              <p style={{ fontSize: 13, margin: 0 }}><strong>Signature :</strong> <code style={{ fontSize: 12, background: 'var(--card)', padding: '2px 6px', borderRadius: 4, border: '1px solid var(--border)' }}>{virusWarning.virus}</code></p>
-            </div>
-            <p style={{ fontSize: 13, color: 'var(--subtext)', marginBottom: 24, lineHeight: 1.5 }}>
-              En tant qu'utilisateur de confiance, vous pouvez confirmer malgré la détection.
-            </p>
-            <div style={{ display: 'flex', gap: 8 }}>
-              <button className="btn btn-ghost" style={{ flex: 1 }} onClick={() => { virusResolveRef.current?.(false); setVirusWarning(null) }}>Annuler</button>
-              <button className="btn btn-primary" style={{ flex: 1, background: '#D97706', borderColor: '#D97706' }} onClick={() => { virusResolveRef.current?.(true); setVirusWarning(null) }}>Je confirme quand même</button>
-            </div>
-          </div>
-        </div>
-      )}
 
       {previewFile && (() => {
         const cat = getFileCategory(previewFile)

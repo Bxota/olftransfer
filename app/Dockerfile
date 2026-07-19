@@ -13,6 +13,7 @@ COPY app/requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 COPY app/src/ ./src/
 COPY scripts/ ./scripts/
+COPY infra/roles/postgres/files/schema.sql ./schema.sql
 COPY --from=frontend-build /frontend/dist/ ./src/static/
 EXPOSE 8000
 CMD ["uvicorn", "src.main:app", "--host", "0.0.0.0", "--port", "8000"]

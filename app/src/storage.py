@@ -5,6 +5,7 @@ from urllib.parse import urlparse
 
 import boto3
 from botocore.config import Config
+from botocore.exceptions import ClientError
 
 _client = None
 _presign_client = None
@@ -192,6 +193,18 @@ def download_object(object_key: str) -> bytes:
     return response["Body"].read()
 
 
+def get_object_size(object_key: str) -> int | None:
+    """Retourne la taille réelle d'un objet, ou None s'il n'existe pas."""
+    try:
+        response = get_client().head_object(Bucket=_bucket(), Key=object_key)
+    except ClientError as exc:
+        error_code = exc.response.get("Error", {}).get("Code", "")
+        if error_code in {"404", "NoSuchKey", "NotFound"}:
+            return None
+        raise
+    return int(response["ContentLength"])
+
+
 def _is_local() -> bool:
     endpoint = os.environ.get("S3_ENDPOINT", "")
     return "minio" in endpoint or "localhost" in endpoint or "127.0.0.1" in endpoint
@@ -308,5 +321,4 @@ def get_bucket_stats(force_refresh: bool = False) -> dict:
     }
     _bucket_stats_ts = now
     return {**_bucket_stats_cache, "from_cache": False}
-
 

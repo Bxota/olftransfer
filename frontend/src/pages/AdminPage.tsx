@@ -3,13 +3,11 @@ import { Link, useNavigate } from 'react-router-dom'
 import { useAuth } from '../App'
 import { formatBytes } from '../lib/utils'
 import UserIcon from '../icons/user-icon'
-import UserCheckIcon from '../icons/user-check-icon'
 
 interface UserItem {
   id: string
   email: string
   is_admin: boolean
-  is_trusted: boolean
   created_at: string
   storage_quota_bytes: number
 }
@@ -89,15 +87,6 @@ export default function AdminPage() {
     })
     if (res.ok) loadUsers()
     else alert('Erreur lors de la mise à jour du quota')
-  }
-
-  async function handleTrustedToggle(u: UserItem) {
-    const res = await fetch(`/admin/users/${u.id}/trusted`, {
-      method: 'PATCH',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ is_trusted: !u.is_trusted }),
-    })
-    if (res.ok) loadUsers()
   }
 
   async function handleLogout() {
@@ -182,15 +171,12 @@ export default function AdminPage() {
                   {users.map(u => (
                     <li key={u.id} className="file-item" style={{ gap: 8 }}>
                       <div className="file-type-icon">
-                        {u.is_trusted
-                          ? <UserCheckIcon size={16} strokeWidth={2} color={`var(--success)`} />
-                          : <UserIcon size={16} strokeWidth={2} />
-                        }
+                        <UserIcon size={16} strokeWidth={2} />
                       </div>
                       <div className="file-info">
                         <div className="file-name">{u.email}</div>
                         <div className="file-size">
-                          {u.is_admin ? 'Admin · ' : ''}{u.is_trusted ? 'Trusted · ' : ''}
+                          {u.is_admin ? 'Admin · ' : ''}
                           Membre depuis {new Date(u.created_at).toLocaleDateString('fr-FR')}
                         </div>
                       </div>
@@ -201,14 +187,6 @@ export default function AdminPage() {
                         title="Modifier le quota"
                       >
                         {formatBytes(u.storage_quota_bytes)}
-                      </button>
-                      <button
-                        className="btn btn-ghost btn-sm"
-                        style={{ fontSize: 11, padding: '3px 8px', whiteSpace: 'nowrap', color: u.is_trusted ? 'var(--success)' : 'var(--subtext)' }}
-                        onClick={() => handleTrustedToggle(u)}
-                        title={u.is_trusted ? 'Retirer le statut trusted' : 'Marquer comme trusted'}
-                      >
-                        {u.is_trusted ? '✓ Trusted' : 'Trusted'}
                       </button>
                     </li>
                   ))}

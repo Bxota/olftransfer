@@ -1,6 +1,6 @@
-from pydantic import BaseModel, Field
 from datetime import datetime
 
+from pydantic import BaseModel, Field
 
 # ── Shared ────────────────────────────────────────────────────────────────────
 
@@ -47,17 +47,12 @@ class UserListItem(BaseModel):
     id: str
     email: str
     is_admin: bool
-    is_trusted: bool
     created_at: datetime
     storage_quota_bytes: int
 
 
 class SetQuotaRequest(BaseModel):
     storage_quota_bytes: int = Field(ge=0, description="Quota de stockage en octets")
-
-
-class SetTrustedRequest(BaseModel):
-    is_trusted: bool = Field(description="Si True, les fichiers suspects passent avec avertissement")
 
 
 # ── Uploads ───────────────────────────────────────────────────────────────────
@@ -102,13 +97,13 @@ class AbortUploadRequest(BaseModel):
 # ── Transfers ─────────────────────────────────────────────────────────────────
 
 class FileIn(BaseModel):
-    filename: str
-    size_bytes: int
+    filename: str = Field(min_length=1, max_length=255)
+    size_bytes: int = Field(ge=0)
     mime_type: str | None = None
 
 
 class CreateTransferRequest(BaseModel):
-    files: list[FileIn]
+    files: list[FileIn] = Field(min_length=1, max_length=1000)
     name: str | None = Field(default=None, max_length=100, description="Nom optionnel du transfert")
     expires_in_hours: int = Field(default=168, ge=1, description="Durée de validité en heures (défaut : 7 jours)")
     password: str | None = Field(default=None, description="Mot de passe optionnel pour protéger le transfert")
@@ -130,18 +125,11 @@ class CreateTransferResponse(BaseModel):
 
 
 class AddFilesRequest(BaseModel):
-    files: list[FileIn]
+    files: list[FileIn] = Field(min_length=1, max_length=1000)
 
 
 class AddFilesResponse(BaseModel):
     uploads: list[UploadUrl]
-
-
-class ConfirmTransferRequest(BaseModel):
-    acknowledge_risk: bool = Field(
-        default=False,
-        description="Si True, valide le transfert même si un fichier suspect a été détecté (réservé aux utilisateurs de confiance)",
-    )
 
 
 class FileInfo(BaseModel):
@@ -159,6 +147,7 @@ class TransferInfo(BaseModel):
     has_password: bool
     files: list[FileInfo]
     sender_username: str | None = None
+    zip_download_available: bool = True
 
 
 class DownloadUrl(BaseModel):

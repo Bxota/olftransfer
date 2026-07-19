@@ -1,11 +1,17 @@
+import hashlib
+import hmac
 import os
+
 import bcrypt
-from itsdangerous import BadSignature, SignatureExpired, URLSafeTimedSerializer
+from argon2 import PasswordHasher
+from argon2.exceptions import InvalidHashError, VerificationError, VerifyMismatchError
 from fastapi import Cookie, Depends, Header, HTTPException
+from itsdangerous import BadSignature, SignatureExpired, URLSafeTimedSerializer
 
 from .db import get_conn
 
 SESSION_MAX_AGE = 60 * 60 * 24 * 7  # 7 jours
+_password_hasher = PasswordHasher()
 
 
 def _signer() -> URLSafeTimedSerializer:
@@ -26,11 +32,39 @@ def get_session_user_id(session: str | None) -> str | None:
 
 
 def hash_password(password: str) -> str:
-    return bcrypt.hashpw(password.encode(), bcrypt.gensalt()).decode()
+    return _password_hasher.hash(password)
 
 
 def verify_password(password: str, hashed: str) -> bool:
-    return bcrypt.checkpw(password.encode(), hashed.encode())
+    if hashed.startswith("$argon2"):
+        try:
+            return _password_hasher.verify(hashed, password)
+        except (InvalidHashError, VerificationError, VerifyMismatchError):
+            return False
+
+    # Compatibilité temporaire : comptes créés avant la migration Argon2.
+    if hashed.startswith(("$2a$", "$2b$", "$2y$")):
+        try:
+            return bcrypt.checkpw(password.encode(), hashed.encode())
+        except ValueError:
+            return False
+
+    # Compatibilité temporaire : mots de passe de transfert historiquement
+    # stockés sous forme d'un SHA-256 hexadécimal non salé.
+    if len(hashed) == 64:
+        legacy_digest = hashlib.sha256(password.encode()).hexdigest()
+        return hmac.compare_digest(legacy_digest, hashed)
+
+    return False
+
+
+def password_needs_rehash(hashed: str) -> bool:
+    if not hashed.startswith("$argon2"):
+        return True
+    try:
+        return _password_hasher.check_needs_rehash(hashed)
+    except InvalidHashError:
+        return True
 
 
 def get_current_user(
@@ -42,10 +76,10 @@ def get_current_user(
     if x_api_key and expected_key and x_api_key == expected_key:
         with get_conn() as conn:
             cur = conn.cursor()
-            cur.execute("SELECT id, email, is_admin, is_trusted, storage_quota_bytes FROM users WHERE is_admin = TRUE LIMIT 1")
+            cur.execute("SELECT id, email, is_admin, storage_quota_bytes FROM users WHERE is_admin = TRUE LIMIT 1")
             row = cur.fetchone()
         if row:
-            return {"id": str(row[0]), "email": row[1], "is_admin": row[2], "is_trusted": row[3], "storage_quota_bytes": row[4]}
+            return {"id": str(row[0]), "email": row[1], "is_admin": row[2], "storage_quota_bytes": row[3]}
 
     # Session cookie auth
     user_id = get_session_user_id(session)
@@ -53,11 +87,11 @@ def get_current_user(
         raise HTTPException(status_code=401, detail="Not authenticated")
     with get_conn() as conn:
         cur = conn.cursor()
-        cur.execute("SELECT id, email, is_admin, is_trusted, storage_quota_bytes FROM users WHERE id = %s", (user_id,))
+        cur.execute("SELECT id, email, is_admin, storage_quota_bytes FROM users WHERE id = %s", (user_id,))
         row = cur.fetchone()
     if not row:
         raise HTTPException(status_code=401, detail="Not authenticated")
-    return {"id": str(row[0]), "email": row[1], "is_admin": row[2], "is_trusted": row[3], "storage_quota_bytes": row[4]}
+    return {"id": str(row[0]), "email": row[1], "is_admin": row[2], "storage_quota_bytes": row[3]}
 
 
 def get_optional_user(session: str | None = Cookie(default=None)) -> dict | None:
@@ -66,11 +100,11 @@ def get_optional_user(session: str | None = Cookie(default=None)) -> dict | None
         return None
     with get_conn() as conn:
         cur = conn.cursor()
-        cur.execute("SELECT id, email, is_admin, is_trusted, storage_quota_bytes FROM users WHERE id = %s", (user_id,))
+        cur.execute("SELECT id, email, is_admin, storage_quota_bytes FROM users WHERE id = %s", (user_id,))
         row = cur.fetchone()
     if not row:
         return None
-    return {"id": str(row[0]), "email": row[1], "is_admin": row[2], "is_trusted": row[3], "storage_quota_bytes": row[4]}
+    return {"id": str(row[0]), "email": row[1], "is_admin": row[2], "storage_quota_bytes": row[3]}
 
 
 def require_admin(user: dict = Depends(get_current_user)) -> dict:

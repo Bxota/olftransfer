@@ -18,6 +18,7 @@ interface TransferData {
   has_password: boolean
   files: TransferFile[]
   sender_username?: string
+  zip_download_available: boolean
 }
 
 type PageState = 'loading' | 'password' | 'error' | 'ready'
@@ -137,7 +138,7 @@ export default function TransferPage() {
     if (downloadingAll) return
     setDownloadingAll(true)
     try {
-      if (transfer && transfer.files.length > 1) {
+      if (transfer && transfer.files.length > 1 && transfer.zip_download_available) {
         const params = passwordRef.current ? `?password=${encodeURIComponent(passwordRef.current)}` : ''
         triggerDownload(`/transfers/${token}/download-zip${params}`, `${token}.zip`)
         // Le zip se construit côté serveur : on garde le bouton désactivé quelques secondes
@@ -353,11 +354,11 @@ export default function TransferPage() {
                   <div className="trust-line">
                     <span className="trust-item trust-item--verified">
                       <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5"><polyline points="20 6 9 17 4 12" /></svg>
-                      Analysé (antivirus)
+                      Fichiers vérifiés
                     </span>
                     <span className="trust-item">
                       <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><rect x="3" y="11" width="18" height="11" rx="2" ry="2" /><path d="M7 11V7a5 5 0 0 1 10 0v4" /></svg>
-                      Lien chiffré
+                      Connexion chiffrée
                     </span>
                     <span className="trust-item">
                       <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2" /><circle cx="12" cy="7" r="4" /></svg>

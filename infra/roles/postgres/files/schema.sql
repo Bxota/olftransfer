@@ -63,17 +63,6 @@ BEGIN
     END IF;
 END $$;
 
--- Migration : is_trusted pour les utilisateurs pouvant bypass l'antivirus avec acknowledgment
-DO $$
-BEGIN
-    IF NOT EXISTS (
-        SELECT 1 FROM information_schema.columns
-        WHERE table_name = 'users' AND column_name = 'is_trusted'
-    ) THEN
-        ALTER TABLE users ADD COLUMN is_trusted BOOLEAN NOT NULL DEFAULT FALSE;
-    END IF;
-END $$;
-
 -- Migration : confirmed_at NULL = upload en cours ou échoué, non visible
 DO $$
 BEGIN
@@ -84,6 +73,28 @@ BEGIN
         ALTER TABLE transfers ADD COLUMN confirmed_at TIMESTAMP;
         -- Les transferts existants sont considérés comme confirmés
         UPDATE transfers SET confirmed_at = created_at WHERE confirmed_at IS NULL;
+    END IF;
+END $$;
+
+-- Validation des objets : seuls les fichiers vérifiés dans S3 sont exposés.
+DO $$
+BEGIN
+    IF NOT EXISTS (
+        SELECT 1 FROM information_schema.columns
+        WHERE table_name = 'files' AND column_name = 'created_at'
+    ) THEN
+        ALTER TABLE files ADD COLUMN created_at TIMESTAMP NOT NULL DEFAULT NOW();
+    END IF;
+
+    IF NOT EXISTS (
+        SELECT 1 FROM information_schema.columns
+        WHERE table_name = 'files' AND column_name = 'uploaded_at'
+    ) THEN
+        ALTER TABLE files ADD COLUMN uploaded_at TIMESTAMP;
+        UPDATE files f
+        SET uploaded_at = t.confirmed_at
+        FROM transfers t
+        WHERE f.transfer_id = t.id AND t.confirmed_at IS NOT NULL;
     END IF;
 END $$;
 
