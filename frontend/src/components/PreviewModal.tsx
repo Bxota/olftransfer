@@ -9,18 +9,24 @@ interface PreviewModalProps {
   text?: string | null
   onClose: () => void
   onDownload?: () => void
+  onPrevious?: () => void
+  onNext?: () => void
 }
 
-export function PreviewModal({ filename, kind, src, text, onClose, onDownload }: PreviewModalProps) {
+export function PreviewModal({ filename, kind, src, text, onClose, onDownload, onPrevious, onNext }: PreviewModalProps) {
   useEffect(() => {
-    function onKey(e: KeyboardEvent) { if (e.key === 'Escape') onClose() }
+    function onKey(e: KeyboardEvent) {
+      if (e.key === 'Escape') onClose()
+      if (e.key === 'ArrowLeft') onPrevious?.()
+      if (e.key === 'ArrowRight') onNext?.()
+    }
     document.addEventListener('keydown', onKey)
     document.body.style.overflow = 'hidden'
     return () => {
       document.removeEventListener('keydown', onKey)
       document.body.style.overflow = ''
     }
-  }, [onClose])
+  }, [onClose, onPrevious, onNext])
 
   return (
     <div className="preview-modal" role="dialog" aria-modal="true" aria-label={`Aperçu de ${filename}`}>
@@ -51,6 +57,8 @@ export function PreviewModal({ filename, kind, src, text, onClose, onDownload }:
           {kind === 'video' && src && <video src={src} controls autoPlay={false} />}
           {kind === 'audio' && src && <audio src={src} controls />}
           {kind === 'pdf' && src && <iframe src={src} title={filename} style={{ background: 'white' }} />}
+          {onPrevious && <button className="preview-nav preview-nav--previous" onClick={onPrevious} title="Fichier précédent" aria-label="Fichier précédent"><svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5"><polyline points="15 18 9 12 15 6" /></svg></button>}
+          {onNext && <button className="preview-nav preview-nav--next" onClick={onNext} title="Fichier suivant" aria-label="Fichier suivant"><svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5"><polyline points="9 18 15 12 9 6" /></svg></button>}
         </div>
       </div>
     </div>

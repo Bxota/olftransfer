@@ -26,7 +26,8 @@ CREATE TABLE IF NOT EXISTS transfers (
     expires_at    TIMESTAMP NOT NULL,
     password_hash VARCHAR,
     download_count INT NOT NULL DEFAULT 0,
-    max_downloads  INT
+    max_downloads  INT,
+    view_mode      VARCHAR(16) NOT NULL DEFAULT 'auto'
 );
 
 CREATE INDEX IF NOT EXISTS idx_transfers_token      ON transfers (token);
@@ -150,6 +151,17 @@ BEGIN
         WHERE table_name = 'transfers' AND column_name = 'name'
     ) THEN
         ALTER TABLE transfers ADD COLUMN name VARCHAR(100);
+    END IF;
+END $$;
+
+-- Présentation publique du transfert : automatique, galerie ou liste.
+DO $$
+BEGIN
+    IF NOT EXISTS (
+        SELECT 1 FROM information_schema.columns
+        WHERE table_name = 'transfers' AND column_name = 'view_mode'
+    ) THEN
+        ALTER TABLE transfers ADD COLUMN view_mode VARCHAR(16) NOT NULL DEFAULT 'auto';
     END IF;
 END $$;
 

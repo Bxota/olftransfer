@@ -118,11 +118,11 @@ export default function ReceivePage({ onCreated }: ReceivePageProps) {
               onChange={e => setExpiry(e.target.value)}
               style={{ cursor: 'pointer', paddingRight: 24 }}
             >
-              <option value="24">⏱ Ouvert 1 jour</option>
-              <option value="72">⏱ Ouvert 3 jours</option>
-              <option value="168">⏱ Ouvert 7 jours</option>
-              <option value="336">⏱ Ouvert 14 jours</option>
-              <option value="720">⏱ Ouvert 30 jours</option>
+              <option value="24">Ouvert 1 jour</option>
+              <option value="72">Ouvert 3 jours</option>
+              <option value="168">Ouvert 7 jours</option>
+              <option value="336">Ouvert 14 jours</option>
+              <option value="720">Ouvert 30 jours</option>
             </select>
           </div>
         </div>

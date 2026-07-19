@@ -25,6 +25,7 @@ interface HistoryTransfer {
   is_expired: boolean; is_archived: boolean; is_restoring: boolean
   download_count: number; max_downloads: number | null
   has_password: boolean; files: TransferFile[]
+  view_mode: 'auto' | 'gallery' | 'list'
 }
 interface FileProgress { pct: number; done: boolean }
 
@@ -152,25 +153,19 @@ export default function HomePage() {
   const uploadIconRef = useRef<AnimatedIconHandle>(null)
 
   // Transfer state
-  const [shareToken, setShareToken] = useState('')
   const [shareLink, setShareLink] = useState('')
   const [creating, setCreating] = useState(false)
   const [uploading, setUploading] = useState(false)
   const [sendError, setSendError] = useState('')
   const [progress, setProgress] = useState<Record<number, FileProgress>>({})
 
-  // Chip popovers
-  const [openChip, setOpenChip] = useState<'name' | 'expiry' | 'password' | 'maxdl' | null>(null)
-  const [chipName, setChipName] = useState('')
-  const [chipExpiry, setChipExpiry] = useState('168')
-  const [chipPassword, setChipPassword] = useState('')
-  const [chipMaxDl, setChipMaxDl] = useState('')
-  const [chipSaving, setChipSaving] = useState(false)
-
-  // Options
+  // Transfer configuration
+  const [transferName, setTransferName] = useState('')
   const [expiry, setExpiry] = useState('168')
   const [maxDownloads, setMaxDownloads] = useState('')
   const [transferPassword, setTransferPassword] = useState('')
+  const [viewMode, setViewMode] = useState<'auto' | 'gallery' | 'list'>('auto')
+  const [advancedOpen, setAdvancedOpen] = useState(false)
 
   // Resume
   const [resumeBanner, setResumeBanner] = useState({ show: false, info: '', error: '' })
@@ -290,7 +285,6 @@ export default function HomePage() {
     setThumbVersion(v => v + 1)
     setFiles(allFiles)
     setFileNames(allNames)
-    startTransfer(allFiles, allNames)
   }
 
   function handleNewFiles(newFiles: File[]) {
@@ -324,39 +318,17 @@ export default function HomePage() {
     setTransferActive(false)
     setFiles([])
     setFileNames([])
-    setShareToken('')
     setShareLink('')
     setSendError('')
     setProgress({})
     setUploading(false)
     setCreating(false)
-    setOpenChip(null)
-    setChipName('')
-    setChipExpiry('168')
-    setChipPassword('')
-    setChipMaxDl('')
-  }
-
-  async function patchTransfer(patch: {
-    name?: string
-    expires_in_hours?: number
-    password?: string
-    remove_password?: boolean
-    max_downloads?: number
-    remove_max_downloads?: boolean
-  }) {
-    if (!shareToken) return
-    setChipSaving(true)
-    try {
-      await fetch(`/transfers/${shareToken}`, {
-        method: 'PATCH',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(patch),
-      })
-    } finally {
-      setChipSaving(false)
-      setOpenChip(null)
-    }
+    setTransferName('')
+    setExpiry('168')
+    setTransferPassword('')
+    setMaxDownloads('')
+    setViewMode('auto')
+    setAdvancedOpen(false)
   }
 
   // ── Resume ───────────────────────────────────────────────────────────────
@@ -409,6 +381,8 @@ export default function HomePage() {
       setFiles(orderedFiles)
       setFileNames(resumeNames)
       setShareLink(resumeData.share_url)
+      activeTransferRef.current = { token: pending.token, nextIndex: orderedFiles.length, confirmed: false }
+      setTransferActive(true)
       setResumeBanner(b => ({ ...b, show: false }))
       setUploading(true)
       setProgress({})
@@ -428,6 +402,7 @@ export default function HomePage() {
       if (!confirmRes.ok) throw new Error(await confirmRes.json().then((d: any) => d.detail).catch(() => 'Erreur'))
 
       clearSession()
+      if (activeTransferRef.current) activeTransferRef.current.confirmed = true
       pendingTransferRef.current = null
       setUploading(false)
       loadHistory()
@@ -496,21 +471,18 @@ export default function HomePage() {
             size_bytes: f.size,
             mime_type: f.type || null,
           })),
-          name: chipName.trim() || null,
+          name: transferName.trim() || null,
           expires_in_hours: parseInt(expiry),
           max_downloads: maxDownloads ? parseInt(maxDownloads) : null,
           password: transferPassword || null,
+          view_mode: viewMode,
         }),
       })
       if (!res.ok) throw new Error((await res.json()).detail || 'Erreur serveur')
       const transfer = await res.json()
 
       saveSession(transfer, filesToSend)
-      setShareToken(transfer.token)
       setShareLink(transfer.share_url)
-      setChipExpiry(expiry)
-      setChipPassword(transferPassword)
-      setChipMaxDl(maxDownloads)
       activeTransferRef.current = { token: transfer.token, nextIndex: filesToSend.length, confirmed: false }
       setTransferActive(true)
       setCreating(false)
@@ -649,14 +621,6 @@ export default function HomePage() {
 
   // ── Render ───────────────────────────────────────────────────────────────
 
-  // Close chip popovers on outside click
-  useEffect(() => {
-    if (!openChip) return
-    function onOutside() { setOpenChip(null) }
-    document.addEventListener('click', onOutside)
-    return () => document.removeEventListener('click', onOutside)
-  }, [openChip])
-
   const hasFiles = files.length > 0
   const allDone = hasFiles && Object.keys(progress).length === files.length && Object.values(progress).every(p => p.done)
 
@@ -785,27 +749,27 @@ export default function HomePage() {
             <div className="card share-card">
               <div className="share-card-header">
                 <div className="share-card-status">
-                  {!allDone && <div className="pulse-dot" />}
-                  {allDone && (
+                  {(creating || uploading) && <div className="pulse-dot" />}
+                  {shareLink && allDone && (
                     <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#0F766E" strokeWidth="2.5">
                       <polyline points="20 6 9 17 4 12" />
                     </svg>
                   )}
                   <span className="share-card-label">
-                    {creating ? 'CRÉATION DU LIEN…' : allDone ? 'TRANSFERT TERMINÉ' : 'LIEN ACTIF — PARTAGEABLE MAINTENANT'}
+                    {!transferActive ? 'PRÉPARER LE TRANSFERT' : creating ? 'CRÉATION DU LIEN…' : allDone ? 'TRANSFERT TERMINÉ' : 'ENVOI EN COURS'}
                   </span>
                 </div>
                 {uploading && <span className="share-card-meta">upload en arrière-plan</span>}
               </div>
 
               <div className="card-body">
-                <div className="share-link-row">
-                  <span className={`share-link-url${!shareLink ? ' share-link-url--loading' : ''}`}>
-                    {shareLink || 'Génération du lien…'}
-                  </span>
-                  {shareLink && <CopyBtn url={shareLink} style="primary" />}
-                  {shareLink && <QrPopover url={shareLink} />}
-                </div>
+                {shareLink && (
+                  <div className="share-link-row">
+                    <span className="share-link-url">{shareLink}</span>
+                    <CopyBtn url={shareLink} style="primary" />
+                    <QrPopover url={shareLink} />
+                  </div>
+                )}
 
                 <ul className="file-list">
                   {files.map((f, i) => {
@@ -837,108 +801,95 @@ export default function HomePage() {
                         <span className={`file-status${prog.done ? ' done' : ''}`} style={{ fontFamily: prog.done ? undefined : "'Geist Mono', monospace" }}>
                           {prog.done ? 'Envoyé' : uploading ? `${prog.pct}%` : formatSize(f.size)}
                         </span>
+                        {!transferActive && (
+                          <button className="file-remove" title={`Retirer ${f.name}`} onClick={() => removeFile(i)}>
+                            <TrashIcon size={15} strokeWidth={2} dangerHover />
+                          </button>
+                        )}
                       </li>
                     )
                   })}
                 </ul>
 
-                <div className="chip-options" onClick={e => e.stopPropagation()}>
-                  {/* Name chip */}
-                  <div className="chip-wrap">
-                    <button className={`chip ${chipName ? 'chip-active' : 'chip-inactive'}`} onClick={() => setOpenChip(openChip === 'name' ? null : 'name')}>
-                      {chipName ? `🏷 ${chipName} ▾` : '🏷 Nommer le transfert'}
-                    </button>
-                    {openChip === 'name' && (
-                      <div className="chip-popover">
-                        <input type="text" placeholder="Nom du transfert" maxLength={100} value={chipName}
-                          onChange={e => setChipName(e.target.value)}
-                          onKeyDown={e => e.key === 'Enter' && patchTransfer({ name: chipName.trim() })}
-                          autoFocus />
-                        <div className="chip-popover-actions">
-                          {chipName && <button className="chip-popover-remove" disabled={chipSaving} onClick={() => { setChipName(''); patchTransfer({ name: '' }) }}>Retirer</button>}
-                          <button className="chip-popover-cancel" onClick={() => setOpenChip(null)}>Annuler</button>
-                          <button className="chip-popover-save" disabled={chipSaving} onClick={() => patchTransfer({ name: chipName.trim() })}>
-                            {chipSaving ? '…' : 'Appliquer'}
-                          </button>
-                        </div>
+                {!transferActive ? (
+                  <div className="transfer-config">
+                    <div className="options-grid">
+                      <div className="field">
+                        <label htmlFor="transferName">Nom du transfert <span className="field-optional">facultatif</span></label>
+                        <input id="transferName" type="text" maxLength={100} placeholder="Ex. Photos du séminaire"
+                          value={transferName} onChange={e => setTransferName(e.target.value)} />
                       </div>
-                    )}
-                  </div>
-
-                  {/* Expiry chip */}
-                  <div className="chip-wrap">
-                    <button className="chip chip-active" onClick={() => setOpenChip(openChip === 'expiry' ? null : 'expiry')}>
-                      ⏱ Expire dans {chipExpiry === '24' ? '1 jour' : chipExpiry === '72' ? '3 jours' : chipExpiry === '168' ? '7 jours' : chipExpiry === '336' ? '14 jours' : '30 jours'} ▾
-                    </button>
-                    {openChip === 'expiry' && (
-                      <div className="chip-popover">
-                        <select value={chipExpiry} onChange={e => setChipExpiry(e.target.value)}>
+                      <div className="field">
+                        <label htmlFor="transferExpiry">Expiration</label>
+                        <select id="transferExpiry" value={expiry} onChange={e => setExpiry(e.target.value)}>
                           <option value="24">1 jour</option>
                           <option value="72">3 jours</option>
                           <option value="168">7 jours</option>
                           <option value="336">14 jours</option>
                           <option value="720">30 jours</option>
                         </select>
-                        <div className="chip-popover-actions">
-                          <button className="chip-popover-cancel" onClick={() => setOpenChip(null)}>Annuler</button>
-                          <button className="chip-popover-save" disabled={chipSaving} onClick={() => patchTransfer({ expires_in_hours: parseInt(chipExpiry) })}>
-                            {chipSaving ? '…' : 'Appliquer'}
-                          </button>
+                      </div>
+                    </div>
+
+                    <fieldset className="presentation-fieldset">
+                      <legend>Présentation aux destinataires</legend>
+                      <div className="presentation-options">
+                        {([
+                          ['auto', 'Automatique', 'Galerie pour les médias, liste pour les documents'],
+                          ['gallery', 'Galerie', 'Mettre les images et vidéos en avant'],
+                          ['list', 'Liste', 'Afficher tous les fichiers dans une liste compacte'],
+                        ] as const).map(([value, label, help]) => (
+                          <label key={value} className={`presentation-option${viewMode === value ? ' selected' : ''}`}>
+                            <input type="radio" name="viewMode" value={value} checked={viewMode === value}
+                              onChange={() => setViewMode(value)} />
+                            <span><strong>{label}</strong><small>{help}</small></span>
+                          </label>
+                        ))}
+                      </div>
+                    </fieldset>
+
+                    <button className="advanced-toggle" type="button" aria-expanded={advancedOpen} onClick={() => setAdvancedOpen(v => !v)}>
+                      <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2">
+                        <path d="M12 15.5A3.5 3.5 0 1 0 12 8a3.5 3.5 0 0 0 0 7.5Z" />
+                        <path d="M19.4 15a1.7 1.7 0 0 0 .34 1.88l.06.06-2.83 2.83-.06-.06a1.7 1.7 0 0 0-1.88-.34 1.7 1.7 0 0 0-1.03 1.56V21h-4v-.08A1.7 1.7 0 0 0 8.94 19.4a1.7 1.7 0 0 0-1.88.34l-.06.06-2.83-2.83.06-.06A1.7 1.7 0 0 0 4.57 15 1.7 1.7 0 0 0 3 14H3v-4h.08A1.7 1.7 0 0 0 4.6 8.94a1.7 1.7 0 0 0-.34-1.88L4.2 7l2.83-2.83.06.06A1.7 1.7 0 0 0 9 4.57 1.7 1.7 0 0 0 10 3h4v.08A1.7 1.7 0 0 0 15.06 4.6a1.7 1.7 0 0 0 1.88-.34L17 4.2 19.83 7l-.06.06A1.7 1.7 0 0 0 19.43 9 1.7 1.7 0 0 0 21 10h.08v4H21a1.7 1.7 0 0 0-1.6 1Z" />
+                      </svg>
+                      Options avancées
+                      <svg className={advancedOpen ? 'rotated' : ''} width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5"><polyline points="6 9 12 15 18 9" /></svg>
+                    </button>
+
+                    {advancedOpen && (
+                      <div className="options-grid advanced-fields">
+                        <div className="field">
+                          <label htmlFor="transferPassword">Mot de passe <span className="field-optional">facultatif</span></label>
+                          <input id="transferPassword" type="password" autoComplete="new-password" placeholder="Protéger l'accès"
+                            value={transferPassword} onChange={e => setTransferPassword(e.target.value)} />
+                        </div>
+                        <div className="field">
+                          <label htmlFor="maxDownloads">Nombre maximal de téléchargements <span className="field-optional">facultatif</span></label>
+                          <input id="maxDownloads" type="number" min="1" placeholder="Illimité"
+                            value={maxDownloads} onChange={e => setMaxDownloads(e.target.value)} />
                         </div>
                       </div>
                     )}
-                  </div>
 
-                  {/* Password chip */}
-                  <div className="chip-wrap">
-                    <button className={`chip ${chipPassword ? 'chip-active' : 'chip-inactive'}`} onClick={() => setOpenChip(openChip === 'password' ? null : 'password')}>
-                      {chipPassword ? '🔒 Protégé ▾' : '＋ Mot de passe'}
-                    </button>
-                    {openChip === 'password' && (
-                      <div className="chip-popover">
-                        <input type="password" placeholder="Nouveau mot de passe" value={chipPassword} onChange={e => setChipPassword(e.target.value)} autoFocus />
-                        <div className="chip-popover-actions">
-                          {chipPassword && <button className="chip-popover-remove" disabled={chipSaving} onClick={() => { setChipPassword(''); patchTransfer({ remove_password: true }) }}>Retirer</button>}
-                          <button className="chip-popover-cancel" onClick={() => setOpenChip(null)}>Annuler</button>
-                          <button className="chip-popover-save" disabled={chipSaving} onClick={() => patchTransfer({ password: chipPassword })}>
-                            {chipSaving ? '…' : 'Appliquer'}
-                          </button>
-                        </div>
-                      </div>
+                    <div className="transfer-config-actions">
+                      <button className="btn btn-ghost" type="button" onClick={resetTransfer}>Annuler</button>
+                      <button className="btn btn-primary" type="button" disabled={creating || files.length === 0}
+                        onClick={() => startTransfer(files, fileNames)}>
+                        {creating ? <><span className="btn-spinner" aria-hidden="true" />Création…</> : 'Créer le transfert'}
+                      </button>
+                    </div>
+                  </div>
+                ) : (
+                  <div className="transfer-complete-actions">
+                    <button className="btn btn-outline btn-sm" onClick={triggerAddFiles}>Ajouter des fichiers</button>
+                    {!uploading && !creating && (
+                      <button className="btn btn-ghost btn-sm" onClick={() => { resetTransfer(); setTimeout(() => document.getElementById('fileInput')?.click(), 50) }}>
+                        Nouveau transfert
+                      </button>
                     )}
                   </div>
-
-                  {/* Max downloads chip */}
-                  <div className="chip-wrap">
-                    <button className={`chip ${chipMaxDl ? 'chip-active' : 'chip-inactive'}`} onClick={() => setOpenChip(openChip === 'maxdl' ? null : 'maxdl')}>
-                      {chipMaxDl ? `⤓ ${chipMaxDl} téléch. max ▾` : '⤓ Limiter téléchargements'}
-                    </button>
-                    {openChip === 'maxdl' && (
-                      <div className="chip-popover">
-                        <input type="number" placeholder="Illimité" min="1" value={chipMaxDl} onChange={e => setChipMaxDl(e.target.value)} autoFocus />
-                        <div className="chip-popover-actions">
-                          {chipMaxDl && <button className="chip-popover-remove" disabled={chipSaving} onClick={() => { setChipMaxDl(''); patchTransfer({ remove_max_downloads: true }) }}>Retirer</button>}
-                          <button className="chip-popover-cancel" onClick={() => setOpenChip(null)}>Annuler</button>
-                          <button className="chip-popover-save" disabled={chipSaving} onClick={() => patchTransfer({ max_downloads: chipMaxDl ? parseInt(chipMaxDl) : undefined })}>
-                            {chipSaving ? '…' : 'Appliquer'}
-                          </button>
-                        </div>
-                      </div>
-                    )}
-                  </div>
-
-                  {transferActive && (
-                    <button className="chip chip-inactive" onClick={triggerAddFiles}>
-                      ＋ Ajouter des fichiers
-                    </button>
-                  )}
-
-                  {!uploading && !creating && (
-                    <button className="chip chip-inactive" onClick={() => { resetTransfer(); setTimeout(() => document.getElementById('fileInput')?.click(), 50) }}>
-                      ＋ Nouveau transfert
-                    </button>
-                  )}
-                </div>
+                )}
 
                 {sendError && <div className="alert alert-error mt-3">{sendError}</div>}
               </div>
@@ -1142,7 +1093,7 @@ export default function HomePage() {
                               </div>
                             )
                           })}
-                          <div className="archive-footer">❄ Conservés en stockage froid — Relancer les remet en ligne</div>
+                          <div className="archive-footer">Conservés en stockage froid — Relancer les remet en ligne</div>
                         </>
                       )}
                     </>

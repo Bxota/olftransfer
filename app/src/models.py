@@ -1,4 +1,5 @@
 from datetime import datetime
+from typing import Literal
 
 from pydantic import BaseModel, Field
 
@@ -108,6 +109,10 @@ class CreateTransferRequest(BaseModel):
     expires_in_hours: int = Field(default=168, ge=1, description="Durée de validité en heures (défaut : 7 jours)")
     password: str | None = Field(default=None, description="Mot de passe optionnel pour protéger le transfert")
     max_downloads: int | None = Field(default=None, ge=1, description="Limite de téléchargements (None = illimité)")
+    view_mode: Literal["auto", "gallery", "list"] = Field(
+        default="auto",
+        description="Présentation publique : automatique, galerie ou liste",
+    )
 
 
 class UploadUrl(BaseModel):
@@ -148,6 +153,7 @@ class TransferInfo(BaseModel):
     files: list[FileInfo]
     sender_username: str | None = None
     zip_download_available: bool = True
+    view_mode: Literal["auto", "gallery", "list"] = "auto"
 
 
 class DownloadUrl(BaseModel):
@@ -173,6 +179,7 @@ class UserTransfer(BaseModel):
     max_downloads: int | None
     has_password: bool
     files: list[FileInfo]
+    view_mode: Literal["auto", "gallery", "list"] = "auto"
 
 
 class RestoreTransferResponse(BaseModel):
@@ -187,6 +194,7 @@ class PatchTransferRequest(BaseModel):
     max_downloads: int | None = Field(default=None, ge=1)
     remove_max_downloads: bool = Field(default=False)
     name: str | None = Field(default=None, max_length=100)
+    view_mode: Literal["auto", "gallery", "list"] | None = None
 
 
 class CreateFileRequestRequest(BaseModel):

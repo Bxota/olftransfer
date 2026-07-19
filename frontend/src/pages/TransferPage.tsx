@@ -7,6 +7,7 @@ import { PreviewModal, PreviewKind } from '../components/PreviewModal'
 interface TransferFile {
   filename: string
   size_bytes: number
+  mime_type?: string | null
 }
 
 interface TransferData {
@@ -19,6 +20,7 @@ interface TransferData {
   files: TransferFile[]
   sender_username?: string
   zip_download_available: boolean
+  view_mode: 'auto' | 'gallery' | 'list'
 }
 
 type PageState = 'loading' | 'password' | 'error' | 'ready'
@@ -53,6 +55,10 @@ function isPreviewable(filename: string): boolean {
   return isImageFile(filename) || isVideoFile(filename) || isAudioFile(filename) || isPdfFile(filename)
 }
 
+function isGalleryFile(filename: string): boolean {
+  return isImageFile(filename) || isVideoFile(filename)
+}
+
 export default function TransferPage() {
   const { token } = useParams<{ token: string }>()
   const [state, setState] = useState<PageState>('loading')
@@ -69,12 +75,21 @@ export default function TransferPage() {
   const [previewFilename, setPreviewFilename] = useState<string | null>(null)
   const [previewIndex, setPreviewIndex] = useState<number | null>(null)
   const [previewLoading, setPreviewLoading] = useState<number | null>(null)
+  const [previewFiles, setPreviewFiles] = useState<{ filename: string; download_url: string }[]>([])
+  const [displayMode, setDisplayMode] = useState<'gallery' | 'list' | null>(null)
 
   // Download in-flight (anti spam-click)
   const [downloadingAll, setDownloadingAll] = useState(false)
   const [downloadingFile, setDownloadingFile] = useState<number | null>(null)
 
   useEffect(() => { loadTransfer() }, [token])
+
+  useEffect(() => {
+    if (state !== 'ready' || !transfer || previewFiles.length > 0) return
+    const preferredMode = transfer.view_mode === 'gallery'
+      || (transfer.view_mode === 'auto' && transfer.files.some(file => isGalleryFile(file.filename)))
+    if (preferredMode) void getPreviewUrls()
+  }, [state, transfer, previewFiles.length])
 
   function closePreview() { setPreviewUrl(null); setPreviewFilename(null); setPreviewIndex(null) }
 
@@ -100,10 +115,9 @@ export default function TransferPage() {
     }
   }
 
-  async function getDownloadUrls(inline = false): Promise<{ filename: string; download_url: string }[] | null> {
+  async function getDownloadUrls(): Promise<{ filename: string; download_url: string }[] | null> {
     const p = new URLSearchParams()
     if (passwordRef.current) p.set('password', passwordRef.current)
-    if (inline) p.set('inline', 'true')
     const params = p.toString() ? `?${p.toString()}` : ''
     const res = await fetch(`/transfers/${token}/download${params}`)
     if (res.status === 401) { setState('password'); return null }
@@ -114,6 +128,18 @@ export default function TransferPage() {
       return null
     }
     return (await res.json()).files
+  }
+
+  async function getPreviewUrls(): Promise<{ filename: string; download_url: string }[] | null> {
+    if (previewFiles.length > 0) return previewFiles
+    const params = passwordRef.current ? `?password=${encodeURIComponent(passwordRef.current)}` : ''
+    const res = await fetch(`/transfers/${token}/preview${params}`)
+    if (res.status === 401) { setState('password'); return null }
+    if (res.status === 403) { setPwError('Mot de passe incorrect.'); setState('password'); return null }
+    if (!res.ok) return null
+    const files = (await res.json()).files
+    setPreviewFiles(files)
+    return files
   }
 
   function triggerDownload(url: string, filename: string) {
@@ -173,12 +199,20 @@ export default function TransferPage() {
   async function openPreview(index: number, filename: string) {
     if (previewLoading !== null) return
     setPreviewLoading(index)
-    const files = await getDownloadUrls(true)
+    const files = await getPreviewUrls()
     setPreviewLoading(null)
     if (!files) return
     setPreviewFilename(filename)
     setPreviewIndex(index)
     setPreviewUrl(files[index].download_url)
+  }
+
+  async function movePreview(direction: -1 | 1) {
+    if (!transfer || previewIndex === null) return
+    const previewable = transfer.files.map((file, index) => isPreviewable(file.filename) ? index : -1).filter(index => index >= 0)
+    const current = previewable.indexOf(previewIndex)
+    const next = previewable[(current + direction + previewable.length) % previewable.length]
+    await openPreview(next, transfer.files[next].filename)
   }
 
   return (
@@ -205,7 +239,7 @@ export default function TransferPage() {
           {state === 'password' && (
             <div className="card">
               <div className="card-body" style={{ textAlign: 'center', paddingBottom: 0 }}>
-                <div style={{ width: 46, height: 46, borderRadius: '50%', border: '2px solid var(--border)', display: 'flex', alignItems: 'center', justifyContent: 'center', margin: '0 auto 13px', fontSize: 20 }}>🔒</div>
+                <div style={{ width: 46, height: 46, borderRadius: '50%', border: '2px solid var(--border)', display: 'flex', alignItems: 'center', justifyContent: 'center', margin: '0 auto 13px', color: 'var(--subtext)' }}><svg width="21" height="21" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><rect x="3" y="11" width="18" height="10" rx="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg></div>
                 <h2 style={{ fontSize: 16, fontWeight: 700, marginBottom: 5 }}>Transfert protégé</h2>
                 <p className="text-subtext" style={{ marginBottom: 0, fontSize: 12.5 }}>Saisissez le mot de passe partagé par l'expéditeur.</p>
               </div>
@@ -225,13 +259,14 @@ export default function TransferPage() {
             <div className="card">
               <div className="card-body text-center">
                 <div style={{ width: 46, height: 46, borderRadius: '50%', border: `2px solid ${isExpired ? '#c9542f' : '#EF4444'}`, color: isExpired ? '#c9542f' : '#EF4444', display: 'flex', alignItems: 'center', justifyContent: 'center', margin: '0 auto 13px', fontSize: 22 }}>
-                  {isExpired ? '⌛' : '!'}
+                  {isExpired ? <svg width="23" height="23" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/></svg> : '!'}
                 </div>
                 <h2 style={{ fontSize: 16, fontWeight: 700, marginBottom: 5 }}>{errorTitle}</h2>
                 <p className="text-subtext" style={{ fontSize: 12.5, lineHeight: 1.45, marginBottom: isExpired ? 18 : 0 }}>{errorMsg}</p>
                 {isExpired && (
                   <a href="mailto:?subject=Nouveau lien OlfTransfer&body=Bonjour, pourriez-vous m'envoyer un nouveau lien ?" className="btn btn-outline btn-full" style={{ display: 'flex' }}>
-                    ✉ Demander un nouveau lien
+                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><rect x="3" y="5" width="18" height="14" rx="2"/><polyline points="3 7 12 13 21 7"/></svg>
+                    Demander un nouveau lien
                   </a>
                 )}
               </div>
@@ -241,6 +276,12 @@ export default function TransferPage() {
           {state === 'ready' && transfer && (() => {
             const totalSize = transfer.files.reduce((s, f) => s + f.size_bytes, 0)
             const expiryDays = getExpiryDays(transfer.expires_at)
+            const hasGalleryFiles = transfer.files.some(file => isGalleryFile(file.filename))
+            const defaultDisplayMode = transfer.view_mode === 'list' || !hasGalleryFiles ? 'list' : 'gallery'
+            const currentDisplayMode = displayMode ?? defaultDisplayMode
+            const listedFiles = currentDisplayMode === 'gallery'
+              ? transfer.files.map((file, index) => ({ file, index })).filter(({ file }) => !isGalleryFile(file.filename))
+              : transfer.files.map((file, index) => ({ file, index }))
 
             return (
               <div className="card">
@@ -261,7 +302,8 @@ export default function TransferPage() {
                       {transfer.files.length} fichier{transfer.files.length > 1 ? 's' : ''} · {formatSize(totalSize)}
                     </span>
                     <span className="expiry-chip">
-                      ⏱ Expire {expiryDays === 0 ? "aujourd'hui" : `dans ${expiryDays} jour${expiryDays > 1 ? 's' : ''}`}
+                      <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/></svg>
+                      Expire {expiryDays === 0 ? "aujourd'hui" : `dans ${expiryDays} jour${expiryDays > 1 ? 's' : ''}`}
                     </span>
                     {transfer.max_downloads && (
                       <span style={{ fontSize: 12, color: 'var(--subtext)' }}>
@@ -296,27 +338,54 @@ export default function TransferPage() {
                   <QrPopover url={window.location.href} style={{ height: 'auto', width: 56, borderRadius: 11 }} />
                   </div>
 
-                  <p className="section-label">Fichiers</p>
-                  <div style={{ display: 'flex', flexDirection: 'column', gap: 10, marginBottom: 18 }}>
-                    {transfer.files.map((f, i) => {
+                  <div className="files-section-header">
+                    <p className="section-label">Fichiers</p>
+                    {hasGalleryFiles && (
+                      <div className="view-toggle" aria-label="Mode d'affichage">
+                        <button className={currentDisplayMode === 'gallery' ? 'active' : ''} onClick={() => setDisplayMode('gallery')} title="Afficher la galerie" aria-label="Afficher la galerie">
+                          <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><rect x="3" y="3" width="7" height="7" rx="1"/><rect x="14" y="3" width="7" height="7" rx="1"/><rect x="3" y="14" width="7" height="7" rx="1"/><rect x="14" y="14" width="7" height="7" rx="1"/></svg>
+                        </button>
+                        <button className={currentDisplayMode === 'list' ? 'active' : ''} onClick={() => setDisplayMode('list')} title="Afficher la liste" aria-label="Afficher la liste">
+                          <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><line x1="8" y1="6" x2="21" y2="6"/><line x1="8" y1="12" x2="21" y2="12"/><line x1="8" y1="18" x2="21" y2="18"/><circle cx="4" cy="6" r="1" fill="currentColor"/><circle cx="4" cy="12" r="1" fill="currentColor"/><circle cx="4" cy="18" r="1" fill="currentColor"/></svg>
+                        </button>
+                      </div>
+                    )}
+                  </div>
+
+                  {currentDisplayMode === 'gallery' && (
+                    <div className="transfer-gallery">
+                      {transfer.files.map((file, index) => isGalleryFile(file.filename) && (
+                        <button key={index} className="gallery-item" onClick={() => openPreview(index, file.filename)} disabled={previewLoading !== null}>
+                          {isImageFile(file.filename) && previewFiles[index]?.download_url ? (
+                            <img src={previewFiles[index].download_url} alt={file.filename} loading="lazy" />
+                          ) : isVideoFile(file.filename) && previewFiles[index]?.download_url ? (
+                            <video src={previewFiles[index].download_url} preload="metadata" muted />
+                          ) : (
+                            <span className="gallery-placeholder">
+                              <svg width="26" height="26" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7"><rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="8.5" cy="8.5" r="1.5"/><path d="m21 15-5-5L5 21"/></svg>
+                            </span>
+                          )}
+                          <span className="gallery-caption">
+                            <strong>{file.filename}</strong>
+                            <small>{formatSize(file.size_bytes)}</small>
+                          </span>
+                          {previewLoading === index && <span className="gallery-loading"><span className="btn-spinner" /></span>}
+                        </button>
+                      ))}
+                    </div>
+                  )}
+
+                  {listedFiles.length > 0 && currentDisplayMode === 'gallery' && <p className="section-label files-other-label">Autres fichiers</p>}
+                  {listedFiles.length > 0 && (
+                  <div className="transfer-file-list">
+                    {listedFiles.map(({ file: f, index: i }) => {
                       const ext = getFileExt(f.filename)
-                      const isImg = isImageFile(f.filename)
                       const canPreview = isPreviewable(f.filename)
                       const loading = previewLoading === i
 
                       return (
-                        <div key={i} style={{ display: 'flex', alignItems: 'center', gap: 13, padding: '11px 13px', border: '1.5px solid var(--border)', borderRadius: 11 }}>
-                          <div style={{
-                            width: 48, height: 48, borderRadius: 8, flexShrink: 0,
-                            display: 'flex', alignItems: 'center', justifyContent: 'center',
-                            background: isImg
-                              ? 'repeating-linear-gradient(45deg,#e3e2db,#e3e2db 6px,#dad9d1 6px,#dad9d1 12px)'
-                              : 'var(--primary-light)',
-                            border: isImg ? 'none' : '1.5px solid #c7ece6',
-                            fontFamily: "'Geist Mono', monospace", fontSize: 9, color: isImg ? '#8a897e' : 'var(--primary)', fontWeight: 600,
-                          }}>
-                            {isImg ? 'IMG' : ext}
-                          </div>
+                        <div key={i} className="transfer-file-row">
+                          <div className="transfer-file-type">{ext}</div>
                           <div style={{ flex: 1, minWidth: 0 }}>
                             <div style={{ fontSize: 14, fontWeight: 600, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{f.filename}</div>
                             <div style={{ fontSize: 12, color: 'var(--subtext)', marginTop: 2 }}>{formatSize(f.size_bytes)}</div>
@@ -350,6 +419,7 @@ export default function TransferPage() {
                       )
                     })}
                   </div>
+                  )}
 
                   <div className="trust-line">
                     <span className="trust-item trust-item--verified">
@@ -385,6 +455,8 @@ export default function TransferPage() {
             src={previewUrl}
             onClose={closePreview}
             onDownload={previewIndex !== null ? () => downloadFile(previewIndex) : undefined}
+            onPrevious={transfer && transfer.files.filter(file => isPreviewable(file.filename)).length > 1 ? () => movePreview(-1) : undefined}
+            onNext={transfer && transfer.files.filter(file => isPreviewable(file.filename)).length > 1 ? () => movePreview(1) : undefined}
           />
         )
       })()}

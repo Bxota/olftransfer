@@ -207,6 +207,7 @@ def _download_file_rows(
     password: str | None,
     notify: bool = True,
     max_total_size: int | None = None,
+    consume_download: bool = True,
 ):
     with get_conn() as conn:
         cur = conn.cursor()
@@ -231,13 +232,17 @@ def _download_file_rows(
         if expires_at.replace(tzinfo=UTC) < datetime.now(UTC):
             raise HTTPException(status_code=410, detail="Transfer expired")
 
-        if max_downloads and download_count >= max_downloads:
+        if consume_download and max_downloads and download_count >= max_downloads:
             raise HTTPException(status_code=410, detail="Download limit reached")
 
         _verify_and_upgrade_password(cur, transfer_id, password, password_hash)
 
         cur.execute(
-            "SELECT filename, size_bytes, storage_key FROM files WHERE transfer_id = %s AND uploaded_at IS NOT NULL",
+            """
+            SELECT filename, size_bytes, storage_key FROM files
+            WHERE transfer_id = %s AND uploaded_at IS NOT NULL
+            ORDER BY created_at, id
+            """,
             (transfer_id,),
         )
         rows = cur.fetchall()
@@ -251,15 +256,16 @@ def _download_file_rows(
                 ),
             )
 
-        cur.execute(
-            "UPDATE transfers SET download_count = download_count + 1 WHERE id = %s",
-            (transfer_id,),
-        )
+        if consume_download:
+            cur.execute(
+                "UPDATE transfers SET download_count = download_count + 1 WHERE id = %s",
+                (transfer_id,),
+            )
 
         # Throttle : au plus une notification mail par transfert toutes les 5 minutes
         # (UPDATE atomique pour éviter les doublons entre requêtes concurrentes).
         should_notify = False
-        if notify:
+        if notify and consume_download:
             cur.execute(
                 """
                 UPDATE transfers SET last_notified_at = NOW()
@@ -610,10 +616,10 @@ def create_transfer(body: CreateTransferRequest, user: dict = Depends(get_curren
 
         cur.execute(
             """
-            INSERT INTO transfers (user_id, token, expires_at, password_hash, max_downloads, name)
-            VALUES (%s, %s, %s, %s, %s, %s) RETURNING id
+            INSERT INTO transfers (user_id, token, expires_at, password_hash, max_downloads, name, view_mode)
+            VALUES (%s, %s, %s, %s, %s, %s, %s) RETURNING id
             """,
-            (user["id"], token, expires_at, password_hash, body.max_downloads, body.name),
+            (user["id"], token, expires_at, password_hash, body.max_downloads, body.name, body.view_mode),
         )
         transfer_id = cur.fetchone()[0]
 
@@ -737,7 +743,7 @@ def list_my_transfers(user: dict = Depends(get_current_user)):
             """
             SELECT id, token, created_at, expires_at, download_count, max_downloads,
                    password_hash IS NOT NULL AS has_password, name,
-                   archived_at, restore_requested_at
+                   archived_at, restore_requested_at, view_mode
             FROM transfers WHERE user_id = %s AND confirmed_at IS NOT NULL ORDER BY created_at DESC
             """,
             (user["id"],),
@@ -746,9 +752,13 @@ def list_my_transfers(user: dict = Depends(get_current_user)):
 
         result = []
         for t in transfers:
-            t_id, token, created_at, expires_at, dl_count, max_dl, has_pw, name, archived_at, restore_requested_at = t
+            t_id, token, created_at, expires_at, dl_count, max_dl, has_pw, name, archived_at, restore_requested_at, view_mode = t
             cur.execute(
-                "SELECT filename, size_bytes, mime_type FROM files WHERE transfer_id = %s AND uploaded_at IS NOT NULL",
+                """
+                SELECT filename, size_bytes, mime_type FROM files
+                WHERE transfer_id = %s AND uploaded_at IS NOT NULL
+                ORDER BY created_at, id
+                """,
                 (t_id,),
             )
             files = [FileInfo(filename=r[0], size_bytes=r[1], mime_type=r[2]) for r in cur.fetchall()]
@@ -766,6 +776,7 @@ def list_my_transfers(user: dict = Depends(get_current_user)):
                 max_downloads=max_dl,
                 has_password=has_pw,
                 files=files,
+                view_mode=view_mode,
             ))
     return result
 
@@ -824,6 +835,9 @@ def patch_transfer(token: str, body: PatchTransferRequest, user: dict = Depends(
         if body.name is not None:
             fields.append("name = %s")
             params.append(body.name or None)
+        if body.view_mode is not None:
+            fields.append("view_mode = %s")
+            params.append(body.view_mode)
 
         if fields:
             params.append(transfer_id)
@@ -994,7 +1008,7 @@ def get_transfer(token: str, password: str | None = Query(default=None)):
         cur = conn.cursor()
         cur.execute(
             """
-            SELECT t.id, t.expires_at, t.download_count, t.max_downloads, t.name, t.password_hash, u.email
+            SELECT t.id, t.expires_at, t.download_count, t.max_downloads, t.name, t.password_hash, u.email, t.view_mode
             FROM transfers t LEFT JOIN users u ON u.id = t.user_id
             WHERE t.token = %s AND t.confirmed_at IS NOT NULL
             """,
@@ -1004,7 +1018,7 @@ def get_transfer(token: str, password: str | None = Query(default=None)):
         if not row:
             raise HTTPException(status_code=404, detail="Transfer not found")
 
-        transfer_id, expires_at, download_count, max_downloads, name, password_hash, sender_email = row
+        transfer_id, expires_at, download_count, max_downloads, name, password_hash, sender_email, view_mode = row
         sender_username = sender_email.split("@")[0] if sender_email else None
         has_password = bool(password_hash)
 
@@ -1018,7 +1032,11 @@ def get_transfer(token: str, password: str | None = Query(default=None)):
 
         if not has_password or password_unlocked:
             cur.execute(
-                "SELECT filename, size_bytes, mime_type FROM files WHERE transfer_id = %s AND uploaded_at IS NOT NULL",
+                """
+                SELECT filename, size_bytes, mime_type FROM files
+                WHERE transfer_id = %s AND uploaded_at IS NOT NULL
+                ORDER BY created_at, id
+                """,
                 (transfer_id,),
             )
             files = [FileInfo(filename=r[0], size_bytes=r[1], mime_type=r[2]) for r in cur.fetchall()]
@@ -1035,13 +1053,19 @@ def get_transfer(token: str, password: str | None = Query(default=None)):
         files=files,
         sender_username=sender_username,
         zip_download_available=sum(file.size_bytes for file in files) <= MAX_ZIP_SIZE_BYTES,
+        view_mode=view_mode,
     )
 
 
 
 @app.get("/transfers/{token}/download", tags=["Transfers"], summary="Obtenir les URLs de téléchargement", response_model=DownloadResponse)
 def download_transfer(token: str, password: str | None = Query(default=None, description="Mot de passe si le transfert est protégé"), inline: bool = Query(default=False, description="Si True, renvoie des URLs inline (aperçu) au lieu de attachment"), downloader: dict | None = Depends(get_optional_user)):
-    rows, sender_email, transfer_name, should_notify = _download_file_rows(token, password, notify=not inline)
+    rows, sender_email, transfer_name, should_notify = _download_file_rows(
+        token,
+        password,
+        notify=not inline,
+        consume_download=not inline,
+    )
 
     total_bytes = sum(r[1] for r in rows)
     filenames = [r[0] for r in rows]
@@ -1055,6 +1079,27 @@ def download_transfer(token: str, password: str | None = Query(default=None, des
         media_type="application/json",
         background=background,
     )
+
+
+@app.get("/transfers/{token}/preview", tags=["Transfers"], summary="Obtenir les URLs d'aperçu", response_model=DownloadResponse)
+def preview_transfer(
+    token: str,
+    password: str | None = Query(default=None, description="Mot de passe si le transfert est protégé"),
+):
+    rows, _, _, _ = _download_file_rows(
+        token,
+        password,
+        notify=False,
+        consume_download=False,
+    )
+    return DownloadResponse(files=[
+        DownloadUrl(
+            filename=row[0],
+            size_bytes=row[1],
+            download_url=presigned_download_url(row[2], row[0], inline=True),
+        )
+        for row in rows
+    ])
 
 
 @app.get("/transfers/{token}/download-zip", tags=["Transfers"], summary="Télécharger tous les fichiers en ZIP")

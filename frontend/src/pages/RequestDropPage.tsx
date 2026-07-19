@@ -153,7 +153,7 @@ export default function RequestDropPage() {
           {state === 'error' && (
             <div className="card">
               <div className="card-body text-center">
-                <div style={{ fontSize: 32, marginBottom: 12 }}>⌛</div>
+                <div style={{ width: 42, height: 42, margin: '0 auto 12px', color: 'var(--subtext)' }}><svg width="42" height="42" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/></svg></div>
                 <h2 style={{ fontSize: 16, fontWeight: 700 }}>Lien introuvable</h2>
                 <p className="text-subtext" style={{ fontSize: 13 }}>{error}</p>
               </div>
@@ -245,8 +245,9 @@ export default function RequestDropPage() {
                   </button>
                 )}
 
-                <p style={{ fontSize: 11.5, color: 'var(--subtext)', textAlign: 'center', marginTop: 14 }}>
-                  🔒 Vos fichiers ne sont visibles que par {info.requester_username}
+                <p className="privacy-note" style={{ fontSize: 11.5, color: 'var(--subtext)', textAlign: 'center', marginTop: 14 }}>
+                  <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><rect x="3" y="11" width="18" height="10" rx="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg>
+                  Vos fichiers ne sont visibles que par {info.requester_username}
                 </p>
               </div>
             </div>
@@ -255,7 +256,7 @@ export default function RequestDropPage() {
           {state === 'done' && info && (
             <div className="card">
               <div className="card-body text-center">
-                <div style={{ width: 52, height: 52, borderRadius: '50%', background: '#F0FDF4', border: '2px solid #86efac', display: 'flex', alignItems: 'center', justifyContent: 'center', margin: '0 auto 16px', fontSize: 24 }}>✓</div>
+                <div style={{ width: 52, height: 52, borderRadius: '50%', background: '#F0FDF4', border: '2px solid #86efac', color: '#15803d', display: 'flex', alignItems: 'center', justifyContent: 'center', margin: '0 auto 16px' }}><svg width="25" height="25" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5"><polyline points="20 6 9 17 4 12"/></svg></div>
                 <h2 style={{ fontSize: 18, fontWeight: 700, marginBottom: 6 }}>Fichiers envoyés !</h2>
                 <p style={{ fontSize: 13, color: 'var(--subtext)', marginBottom: 20 }}>
                   {info.requester_username} a été notifié et peut maintenant accéder à vos fichiers.
@@ -283,13 +284,14 @@ export default function RequestDropPage() {
                         </svg>
                       </div>
                       <div className="file-info"><div className="file-name">{f.name}</div></div>
-                      <span className="file-status done">Envoyé ✓</span>
+                      <span className="file-status done">Envoyé</span>
                     </li>
                   ))}
                 </ul>
 
-                <p style={{ fontSize: 11.5, color: 'var(--subtext)' }}>
-                  🔒 Vos fichiers ne sont visibles que par {info.requester_username}
+                <p className="privacy-note" style={{ fontSize: 11.5, color: 'var(--subtext)' }}>
+                  <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><rect x="3" y="11" width="18" height="10" rx="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg>
+                  Vos fichiers ne sont visibles que par {info.requester_username}
                 </p>
               </div>
             </div>
