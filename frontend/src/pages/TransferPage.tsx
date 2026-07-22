@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react'
 import { Link, useParams } from 'react-router-dom'
-import { formatSize, formatDateLong } from '../lib/utils'
+import { formatSize, formatDateLong, runWithConcurrency } from '../lib/utils'
 import { QrPopover } from '../components/QrPopover'
 import { PreviewModal, PreviewKind } from '../components/PreviewModal'
 
@@ -45,13 +45,9 @@ function isPhotoFile(filename: string): boolean {
 
 function supportsMobilePhotoShare(): boolean {
   if (typeof window === 'undefined' || !window.matchMedia('(pointer: coarse)').matches) return false
-  if (typeof navigator.share !== 'function' || typeof navigator.canShare !== 'function') return false
-  try {
-    const probe = new File([''], 'photo.jpg', { type: 'image/jpeg' })
-    return navigator.canShare({ files: [probe] })
-  } catch {
-    return false
-  }
+  // Certains navigateurs Android savent partager des fichiers mais n'exposent
+  // pas `canShare`, ou répondent faux avant que les vrais fichiers soient prêts.
+  return typeof navigator.share === 'function'
 }
 
 function isVideoFile(filename: string): boolean {
@@ -97,6 +93,7 @@ export default function TransferPage() {
   const [failedGalleryFiles, setFailedGalleryFiles] = useState<Set<number>>(() => new Set())
   const [displayMode, setDisplayMode] = useState<'gallery' | 'list' | null>(null)
   const [photoShareFiles, setPhotoShareFiles] = useState<File[] | null>(null)
+  const [preparingPhotos, setPreparingPhotos] = useState(false)
   const [savingPhotos, setSavingPhotos] = useState(false)
   const [photoSaveError, setPhotoSaveError] = useState('')
 
@@ -128,22 +125,29 @@ export default function TransferPage() {
     if (state !== 'ready' || !transfer || previewFiles.length !== transfer.files.length) return
     if (!supportsMobilePhotoShare() || !transfer.files.every(file => isPhotoFile(file.filename))) return
     if (transfer.files.length > 50 || transfer.files.reduce((total, file) => total + file.size_bytes, 0) > 150 * 1024 * 1024) return
+    const photoTransfer = transfer
 
     const controller = new AbortController()
     let cancelled = false
 
     async function preparePhotos() {
+      setPreparingPhotos(true)
       try {
-        const files = await Promise.all(previewFiles.map(async (preview, index) => {
+        const files: File[] = new Array(previewFiles.length)
+        await runWithConcurrency(previewFiles.map((preview, index) => async () => {
           const response = await fetch(preview.download_url, { signal: controller.signal })
           if (!response.ok) throw new Error('Image inaccessible')
           const blob = await response.blob()
-          const type = blob.type || transfer?.files[index].mime_type || 'image/jpeg'
-          return new File([blob], preview.filename, { type })
-        }))
-        if (!cancelled && navigator.canShare({ files })) setPhotoShareFiles(files)
+          const type = blob.type || photoTransfer.files[index].mime_type || 'image/jpeg'
+          files[index] = new File([blob], preview.filename, { type })
+        }), 3)
+        if (!cancelled) setPhotoShareFiles(files)
       } catch (error) {
-        if (!cancelled && !(error instanceof DOMException && error.name === 'AbortError')) setPhotoShareFiles(null)
+        if (!cancelled && !(error instanceof DOMException && error.name === 'AbortError')) {
+          setPhotoSaveError("Les photos n'ont pas pu être préparées. Ouvrez le lien dans Chrome ou Safari, puis réessayez.")
+        }
+      } finally {
+        if (!cancelled) setPreparingPhotos(false)
       }
     }
 
@@ -158,6 +162,7 @@ export default function TransferPage() {
 
   async function loadTransfer() {
     setPhotoShareFiles(null)
+    setPreparingPhotos(false)
     setPreviewFiles([])
     setVisibleGalleryFiles(new Set())
     setLoadedGalleryFiles(new Set())
@@ -258,6 +263,9 @@ export default function TransferPage() {
     setPhotoSaveError('')
     setSavingPhotos(true)
     try {
+      if (typeof navigator.canShare === 'function' && !navigator.canShare({ files: photoShareFiles })) {
+        throw new Error('Partage de fichiers non pris en charge')
+      }
       await navigator.share({
         files: photoShareFiles,
         title: transfer?.name || 'Photos OlfTransfer',
@@ -394,6 +402,11 @@ export default function TransferPage() {
             const hasGalleryFiles = transfer.files.some(file => isGalleryFile(file.filename))
             const defaultDisplayMode = transfer.view_mode === 'list' || !hasGalleryFiles ? 'list' : 'gallery'
             const currentDisplayMode = displayMode ?? defaultDisplayMode
+            const photoTransfer = transfer.files.length > 0
+              && transfer.files.every(file => isPhotoFile(file.filename))
+              && transfer.files.length <= 50
+              && totalSize <= 150 * 1024 * 1024
+              && supportsMobilePhotoShare()
             const listedFiles = currentDisplayMode === 'gallery'
               ? transfer.files.map((file, index) => ({ file, index })).filter(({ file }) => !isGalleryFile(file.filename))
               : transfer.files.map((file, index) => ({ file, index }))
@@ -428,10 +441,12 @@ export default function TransferPage() {
                   </div>
 
                   <div className="recipient-primary-actions">
-                  {photoShareFiles ? (
+                  {photoTransfer ? (
                     <>
-                      <button className="btn btn-primary save-photos-btn" onClick={savePhotos} disabled={savingPhotos}>
-                        {savingPhotos ? (
+                      <button className="btn btn-primary save-photos-btn" onClick={savePhotos} disabled={savingPhotos || preparingPhotos || !photoShareFiles}>
+                        {preparingPhotos ? (
+                          <><span className="btn-spinner" aria-hidden="true" />Préparation des photos…</>
+                        ) : savingPhotos ? (
                           <><span className="btn-spinner" aria-hidden="true" />Ouverture de Photos…</>
                         ) : (
                           <>
