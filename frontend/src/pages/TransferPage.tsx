@@ -91,8 +91,10 @@ export default function TransferPage() {
   const [previewFilename, setPreviewFilename] = useState<string | null>(null)
   const [previewIndex, setPreviewIndex] = useState<number | null>(null)
   const [previewLoading, setPreviewLoading] = useState<number | null>(null)
-  const [previewFiles, setPreviewFiles] = useState<{ filename: string; download_url: string }[]>([])
+  const [previewFiles, setPreviewFiles] = useState<{ filename: string; download_url: string; thumbnail_url?: string | null }[]>([])
   const [visibleGalleryFiles, setVisibleGalleryFiles] = useState<Set<number>>(() => new Set())
+  const [loadedGalleryFiles, setLoadedGalleryFiles] = useState<Set<number>>(() => new Set())
+  const [failedGalleryFiles, setFailedGalleryFiles] = useState<Set<number>>(() => new Set())
   const [displayMode, setDisplayMode] = useState<'gallery' | 'list' | null>(null)
   const [photoShareFiles, setPhotoShareFiles] = useState<File[] | null>(null)
   const [savingPhotos, setSavingPhotos] = useState(false)
@@ -158,6 +160,8 @@ export default function TransferPage() {
     setPhotoShareFiles(null)
     setPreviewFiles([])
     setVisibleGalleryFiles(new Set())
+    setLoadedGalleryFiles(new Set())
+    setFailedGalleryFiles(new Set())
     galleryObserversRef.current.forEach(observer => observer.disconnect())
     galleryObserversRef.current.clear()
     setPhotoSaveError('')
@@ -197,7 +201,7 @@ export default function TransferPage() {
     return (await res.json()).files
   }
 
-  async function getPreviewUrls(): Promise<{ filename: string; download_url: string }[] | null> {
+  async function getPreviewUrls(): Promise<{ filename: string; download_url: string; thumbnail_url?: string | null }[] | null> {
     if (previewFiles.length > 0) return previewFiles
     const params = passwordRef.current ? `?password=${encodeURIComponent(passwordRef.current)}` : ''
     const res = await fetch(`/transfers/${token}/preview${params}`)
@@ -491,7 +495,21 @@ export default function TransferPage() {
                       {transfer.files.map((file, index) => isGalleryFile(file.filename) && (
                         <button key={index} ref={observeGalleryItem(index)} className="gallery-item" onClick={() => openPreview(index, file.filename)} disabled={previewLoading !== null}>
                           {isImageFile(file.filename) && visibleGalleryFiles.has(index) && previewFiles[index]?.download_url ? (
-                            <img src={previewFiles[index].download_url} alt={file.filename} loading="lazy" decoding="async" />
+                            <>
+                              {!loadedGalleryFiles.has(index) && !failedGalleryFiles.has(index) && <span className="gallery-media-loader" aria-label="Chargement de l’image"><span className="btn-spinner btn-spinner--dark" /></span>}
+                              <img
+                                className={loadedGalleryFiles.has(index) ? 'gallery-media-ready' : 'gallery-media-pending'}
+                                src={previewFiles[index].thumbnail_url ?? previewFiles[index].download_url}
+                                alt={file.filename}
+                                loading="lazy"
+                                decoding="async"
+                                onLoad={() => setLoadedGalleryFiles(current => current.has(index) ? current : new Set(current).add(index))}
+                                onError={() => setFailedGalleryFiles(current => current.has(index) ? current : new Set(current).add(index))}
+                              />
+                              {failedGalleryFiles.has(index) && <span className="gallery-placeholder" aria-label="Vignette indisponible">
+                                <svg width="26" height="26" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7"><rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="8.5" cy="8.5" r="1.5"/><path d="m21 15-5-5L5 21"/></svg>
+                              </span>}
+                            </>
                           ) : isVideoFile(file.filename) && visibleGalleryFiles.has(index) && previewFiles[index]?.download_url ? (
                             <video src={previewFiles[index].download_url} preload="none" muted />
                           ) : (

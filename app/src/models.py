@@ -160,6 +160,7 @@ class DownloadUrl(BaseModel):
     filename: str
     size_bytes: int
     download_url: str
+    thumbnail_url: str | None = None
 
 
 class DownloadResponse(BaseModel):

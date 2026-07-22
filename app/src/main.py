@@ -3,6 +3,7 @@ import secrets
 import shutil
 import tempfile
 import zipfile
+from io import BytesIO
 from contextlib import asynccontextmanager
 from datetime import UTC, datetime, timedelta
 
@@ -11,6 +12,8 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 from starlette.background import BackgroundTask
+from itsdangerous import BadSignature, SignatureExpired, URLSafeTimedSerializer
+from PIL import Image, ImageOps, UnidentifiedImageError
 
 from .auth import (
     create_session,
@@ -70,6 +73,7 @@ from .storage import (
     complete_multipart_upload,
     create_multipart_upload,
     delete_objects,
+    download_object,
     get_bucket_stats,
     get_client,
     get_object_size,
@@ -83,6 +87,17 @@ from .storage import (
 STATIC_DIR = os.path.join(os.path.dirname(__file__), "static")
 BASE_URL = os.environ.get("BASE_URL", "https://olf-transfer.bxota.com")
 MAX_ZIP_SIZE_BYTES = int(os.environ.get("MAX_ZIP_SIZE_BYTES", str(1024**3)))
+THUMBNAIL_MAX_SIZE = (480, 480)
+THUMBNAIL_TOKEN_MAX_AGE = 60 * 60
+
+
+def _thumbnail_signer() -> URLSafeTimedSerializer:
+    return URLSafeTimedSerializer(os.environ["APP_SECRET"], salt="transfer-thumbnail")
+
+
+def _thumbnail_url(token: str, file_id: str) -> str:
+    signature = _thumbnail_signer().dumps({"transfer": token, "file": file_id})
+    return f"/transfers/{token}/thumbnails/{file_id}?signature={signature}"
 
 
 def _fmt_bytes(n: int) -> str:
@@ -239,7 +254,7 @@ def _download_file_rows(
 
         cur.execute(
             """
-            SELECT filename, size_bytes, storage_key FROM files
+            SELECT filename, size_bytes, storage_key, id FROM files
             WHERE transfer_id = %s AND uploaded_at IS NOT NULL
             ORDER BY created_at, id
             """,
@@ -1097,9 +1112,58 @@ def preview_transfer(
             filename=row[0],
             size_bytes=row[1],
             download_url=presigned_download_url(row[2], row[0], inline=True),
+            thumbnail_url=_thumbnail_url(token, str(row[3])) if _is_thumbnailable(row[0]) else None,
         )
         for row in rows
     ])
+
+
+def _is_thumbnailable(filename: str) -> bool:
+    return filename.lower().endswith((".jpg", ".jpeg", ".png", ".webp", ".avif", ".heic", ".heif", ".tif", ".tiff"))
+
+
+@app.get("/transfers/{token}/thumbnails/{file_id}", tags=["Transfers"], summary="Obtenir une vignette de galerie")
+def transfer_thumbnail(token: str, file_id: str, signature: str = Query(...)):
+    try:
+        payload = _thumbnail_signer().loads(signature, max_age=THUMBNAIL_TOKEN_MAX_AGE)
+    except (BadSignature, SignatureExpired) as exc:
+        raise HTTPException(status_code=403, detail="Vignette expirée") from exc
+    if payload != {"transfer": token, "file": file_id}:
+        raise HTTPException(status_code=403, detail="Vignette invalide")
+
+    with get_conn() as conn:
+        cur = conn.cursor()
+        cur.execute(
+            """
+            SELECT f.filename, f.storage_key
+            FROM files f JOIN transfers t ON t.id = f.transfer_id
+            WHERE f.id = %s AND t.token = %s AND t.confirmed_at IS NOT NULL
+              AND f.uploaded_at IS NOT NULL AND t.expires_at > NOW()
+              AND t.archived_at IS NULL
+            """,
+            (file_id, token),
+        )
+        row = cur.fetchone()
+    if not row or not _is_thumbnailable(row[0]):
+        raise HTTPException(status_code=404, detail="Vignette introuvable")
+
+    try:
+        # La vignette ne conserve ni les métadonnées EXIF ni la résolution originale.
+        with Image.open(BytesIO(download_object(row[1]))) as image:
+            image = ImageOps.exif_transpose(image)
+            image.thumbnail(THUMBNAIL_MAX_SIZE, Image.Resampling.LANCZOS)
+            if image.mode not in ("RGB", "RGBA"):
+                image = image.convert("RGBA" if "transparency" in image.info else "RGB")
+            output = BytesIO()
+            image.save(output, format="WEBP", quality=75, method=4)
+    except (UnidentifiedImageError, Image.DecompressionBombError, OSError) as exc:
+        raise HTTPException(status_code=415, detail="Format image non pris en charge") from exc
+
+    return Response(
+        content=output.getvalue(),
+        media_type="image/webp",
+        headers={"Cache-Control": "private, max-age=3600"},
+    )
 
 
 @app.get("/transfers/{token}/download-zip", tags=["Transfers"], summary="Télécharger tous les fichiers en ZIP")
