@@ -84,6 +84,7 @@ export default function TransferPage() {
   const [passwordInput, setPasswordInput] = useState('')
   const [pwError, setPwError] = useState('')
   const passwordRef = useRef<string | null>(null)
+  const galleryObserversRef = useRef(new Map<number, IntersectionObserver>())
 
   // Preview modal
   const [previewUrl, setPreviewUrl] = useState<string | null>(null)
@@ -91,6 +92,7 @@ export default function TransferPage() {
   const [previewIndex, setPreviewIndex] = useState<number | null>(null)
   const [previewLoading, setPreviewLoading] = useState<number | null>(null)
   const [previewFiles, setPreviewFiles] = useState<{ filename: string; download_url: string }[]>([])
+  const [visibleGalleryFiles, setVisibleGalleryFiles] = useState<Set<number>>(() => new Set())
   const [displayMode, setDisplayMode] = useState<'gallery' | 'list' | null>(null)
   const [photoShareFiles, setPhotoShareFiles] = useState<File[] | null>(null)
   const [savingPhotos, setSavingPhotos] = useState(false)
@@ -101,6 +103,11 @@ export default function TransferPage() {
   const [downloadingFile, setDownloadingFile] = useState<number | null>(null)
 
   useEffect(() => { loadTransfer() }, [token])
+
+  useEffect(() => () => {
+    galleryObserversRef.current.forEach(observer => observer.disconnect())
+    galleryObserversRef.current.clear()
+  }, [])
 
   useEffect(() => {
     if (state !== 'ready' || !transfer || previewFiles.length > 0) return
@@ -150,6 +157,9 @@ export default function TransferPage() {
   async function loadTransfer() {
     setPhotoShareFiles(null)
     setPreviewFiles([])
+    setVisibleGalleryFiles(new Set())
+    galleryObserversRef.current.forEach(observer => observer.disconnect())
+    galleryObserversRef.current.clear()
     setPhotoSaveError('')
     try {
       const res = await fetch(`/transfers/${token}`)
@@ -296,6 +306,24 @@ export default function TransferPage() {
     const current = previewable.indexOf(previewIndex)
     const next = previewable[(current + direction + previewable.length) % previewable.length]
     await openPreview(next, transfer.files[next].filename)
+  }
+
+  // Ne donne une source aux médias que lorsqu'ils approchent de l'écran. Cela
+  // complète `loading=lazy`, dont le seuil et le nombre de téléchargements en
+  // parallèle sont laissés au navigateur et trop généreux sur les grandes listes.
+  function observeGalleryItem(index: number) {
+    return (element: HTMLButtonElement | null) => {
+      if (!element || visibleGalleryFiles.has(index) || galleryObserversRef.current.has(index)) return
+      const observer = new IntersectionObserver(entries => {
+        if (entries.some(entry => entry.isIntersecting)) {
+          setVisibleGalleryFiles(current => current.has(index) ? current : new Set(current).add(index))
+          observer.disconnect()
+          galleryObserversRef.current.delete(index)
+        }
+      }, { rootMargin: '300px 0px' })
+      galleryObserversRef.current.set(index, observer)
+      observer.observe(element)
+    }
   }
 
   return (
@@ -461,11 +489,11 @@ export default function TransferPage() {
                   {currentDisplayMode === 'gallery' && (
                     <div className="transfer-gallery">
                       {transfer.files.map((file, index) => isGalleryFile(file.filename) && (
-                        <button key={index} className="gallery-item" onClick={() => openPreview(index, file.filename)} disabled={previewLoading !== null}>
-                          {isImageFile(file.filename) && previewFiles[index]?.download_url ? (
-                            <img src={previewFiles[index].download_url} alt={file.filename} loading="lazy" />
-                          ) : isVideoFile(file.filename) && previewFiles[index]?.download_url ? (
-                            <video src={previewFiles[index].download_url} preload="metadata" muted />
+                        <button key={index} ref={observeGalleryItem(index)} className="gallery-item" onClick={() => openPreview(index, file.filename)} disabled={previewLoading !== null}>
+                          {isImageFile(file.filename) && visibleGalleryFiles.has(index) && previewFiles[index]?.download_url ? (
+                            <img src={previewFiles[index].download_url} alt={file.filename} loading="lazy" decoding="async" />
+                          ) : isVideoFile(file.filename) && visibleGalleryFiles.has(index) && previewFiles[index]?.download_url ? (
+                            <video src={previewFiles[index].download_url} preload="none" muted />
                           ) : (
                             <span className="gallery-placeholder">
                               <svg width="26" height="26" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7"><rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="8.5" cy="8.5" r="1.5"/><path d="m21 15-5-5L5 21"/></svg>

@@ -751,7 +751,7 @@ body {
 .gallery-item {
   position: relative; overflow: hidden; aspect-ratio: 1 / 1; padding: 0;
   border: 1px solid var(--border); border-radius: 12px; background: #e8ebe9;
-  cursor: pointer; text-align: left; color: white;
+  cursor: pointer; text-align: left; color: white; content-visibility: auto;
 }
 .gallery-item > img, .gallery-item > video { width: 100%; height: 100%; display: block; object-fit: cover; transition: transform .25s; }
 .gallery-item:hover > img, .gallery-item:hover > video { transform: scale(1.025); }

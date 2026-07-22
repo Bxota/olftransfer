@@ -5,10 +5,29 @@
 import { runWithConcurrency } from './utils'
 
 export const CHUNK_SIZE = 100 * 1024 * 1024 // 100 Mo par partie
-export const UPLOAD_CONCURRENCY = 3
+// Quatre workers permettent de mieux utiliser les connexions rapides. Le nombre
+// de requêtes PUT réellement en vol reste borné globalement plus bas : un
+// transfert contenant plusieurs gros fichiers ne peut donc pas saturer le
+// navigateur ou la connexion de l'expéditeur.
+export const UPLOAD_CONCURRENCY = 4
+const MAX_PARALLEL_PUTS = 8
 const PART_RETRIES = 4 // 1 essai + 4 reprises
 
 const delay = (ms: number) => new Promise(r => setTimeout(r, ms))
+
+let activePuts = 0
+const putWaiters: (() => void)[] = []
+
+async function withPutSlot<T>(task: () => Promise<T>): Promise<T> {
+  if (activePuts >= MAX_PARALLEL_PUTS) await new Promise<void>(resolve => putWaiters.push(resolve))
+  activePuts++
+  try {
+    return await task()
+  } finally {
+    activePuts--
+    putWaiters.shift()?.()
+  }
+}
 
 function putXhr(
   url: string,
@@ -43,7 +62,7 @@ async function putWithRetry(
   for (let attempt = 0; attempt <= PART_RETRIES; attempt++) {
     try {
       onProgress?.(0) // reset la progression de cet essai
-      return await putXhr(url, body, headers, onProgress)
+      return await withPutSlot(() => putXhr(url, body, headers, onProgress))
     } catch (e) {
       lastErr = e
       if (attempt < PART_RETRIES) {
