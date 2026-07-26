@@ -23,12 +23,7 @@ export default function LoginPage() {
 }
 
 function PasserelleMark() {
-  return (
-    <svg className="provider-mark" viewBox="0 0 24 24" aria-hidden="true">
-      <path d="M4 7h16M4 17h16M7 4v16M17 4v16" />
-      <path d="M4 12h16" />
-    </svg>
-  )
+  return <img className="provider-mark" src="/passerelle-mark.svg" alt="" />
 }
 
 function Logo() {
