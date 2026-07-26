@@ -1,4 +1,5 @@
 import UploadIcon from '../icons/upload-icon'
+import passerelleMark from '../assets/passerelle-mark.svg'
 
 export default function LoginPage() {
   return (
@@ -23,7 +24,7 @@ export default function LoginPage() {
 }
 
 function PasserelleMark() {
-  return <img className="provider-mark" src="/passerelle-mark.svg" alt="" />
+  return <img className="provider-mark" src={passerelleMark} alt="" />
 }
 
 function Logo() {
