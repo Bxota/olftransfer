@@ -3,17 +3,17 @@ import secrets
 import shutil
 import tempfile
 import zipfile
-from io import BytesIO
 from contextlib import asynccontextmanager
 from datetime import UTC, datetime, timedelta
+from io import BytesIO
 
 from fastapi import Depends, FastAPI, HTTPException, Query, Response
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
-from starlette.background import BackgroundTask
 from itsdangerous import BadSignature, SignatureExpired, URLSafeTimedSerializer
 from PIL import Image, ImageOps, UnidentifiedImageError
+from starlette.background import BackgroundTask
 
 from .auth import (
     create_session,
