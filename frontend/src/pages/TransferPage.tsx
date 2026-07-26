@@ -70,6 +70,10 @@ function isGalleryFile(filename: string): boolean {
   return isImageFile(filename) || isVideoFile(filename)
 }
 
+function isGallerySaveableFile(filename: string): boolean {
+  return isPhotoFile(filename) || isVideoFile(filename)
+}
+
 export default function TransferPage() {
   const { token } = useParams<{ token: string }>()
   const [state, setState] = useState<PageState>('loading')
@@ -113,9 +117,7 @@ export default function TransferPage() {
     const preferredMode = transfer.view_mode === 'gallery'
       || (transfer.view_mode === 'auto' && transfer.files.some(file => isGalleryFile(file.filename)))
     const needsPhotoShare = transfer.files.length > 0
-      && transfer.files.every(file => isPhotoFile(file.filename))
-      && transfer.files.length <= 50
-      && transfer.files.reduce((total, file) => total + file.size_bytes, 0) <= 150 * 1024 * 1024
+      && transfer.files.every(file => isGallerySaveableFile(file.filename))
       && supportsMobilePhotoShare()
     if (preferredMode || needsPhotoShare) void getPreviewUrls()
   }, [state, transfer, previewFiles.length])
@@ -123,8 +125,7 @@ export default function TransferPage() {
   useEffect(() => {
     if (photoShareFiles) return
     if (state !== 'ready' || !transfer || previewFiles.length !== transfer.files.length) return
-    if (!supportsMobilePhotoShare() || !transfer.files.every(file => isPhotoFile(file.filename))) return
-    if (transfer.files.length > 50 || transfer.files.reduce((total, file) => total + file.size_bytes, 0) > 150 * 1024 * 1024) return
+    if (!supportsMobilePhotoShare() || !transfer.files.every(file => isGallerySaveableFile(file.filename))) return
     const photoTransfer = transfer
 
     const controller = new AbortController()
@@ -144,7 +145,7 @@ export default function TransferPage() {
         if (!cancelled) setPhotoShareFiles(files)
       } catch (error) {
         if (!cancelled && !(error instanceof DOMException && error.name === 'AbortError')) {
-          setPhotoSaveError("Les photos n'ont pas pu être préparées. Ouvrez le lien dans Chrome ou Safari, puis réessayez.")
+          setPhotoSaveError("Les fichiers n'ont pas pu être préparés. Ouvrez le lien dans Chrome ou Safari, puis réessayez.")
         }
       } finally {
         if (!cancelled) setPreparingPhotos(false)
@@ -402,10 +403,8 @@ export default function TransferPage() {
             const hasGalleryFiles = transfer.files.some(file => isGalleryFile(file.filename))
             const defaultDisplayMode = transfer.view_mode === 'list' || !hasGalleryFiles ? 'list' : 'gallery'
             const currentDisplayMode = displayMode ?? defaultDisplayMode
-            const photoTransfer = transfer.files.length > 0
-              && transfer.files.every(file => isPhotoFile(file.filename))
-              && transfer.files.length <= 50
-              && totalSize <= 150 * 1024 * 1024
+            const gallerySaveTransfer = transfer.files.length > 0
+              && transfer.files.every(file => isGallerySaveableFile(file.filename))
               && supportsMobilePhotoShare()
             const listedFiles = currentDisplayMode === 'gallery'
               ? transfer.files.map((file, index) => ({ file, index })).filter(({ file }) => !isGalleryFile(file.filename))
@@ -441,11 +440,11 @@ export default function TransferPage() {
                   </div>
 
                   <div className="recipient-primary-actions">
-                  {photoTransfer ? (
+                  {gallerySaveTransfer ? (
                     <>
                       <button className="btn btn-primary save-photos-btn" onClick={savePhotos} disabled={savingPhotos || preparingPhotos || !photoShareFiles}>
                         {preparingPhotos ? (
-                          <><span className="btn-spinner" aria-hidden="true" />Préparation des photos…</>
+                          <><span className="btn-spinner" aria-hidden="true" />Préparation des fichiers…</>
                         ) : savingPhotos ? (
                           <><span className="btn-spinner" aria-hidden="true" />Ouverture de Photos…</>
                         ) : (
@@ -456,7 +455,7 @@ export default function TransferPage() {
                               <path d="m21 15-5-5L5 20" />
                               <path d="M12 7v7m-3-3 3 3 3-3" />
                             </svg>
-                            Enregistrer dans Photos
+                            Enregistrer dans la galerie
                           </>
                         )}
                       </button>
