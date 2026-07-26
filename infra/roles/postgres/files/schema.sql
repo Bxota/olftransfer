@@ -8,6 +8,26 @@ CREATE TABLE IF NOT EXISTS users (
     created_at    TIMESTAMP NOT NULL DEFAULT NOW()
 );
 
+DO $$
+BEGIN
+    IF NOT EXISTS (
+        SELECT 1 FROM information_schema.columns
+        WHERE table_name = 'users' AND column_name = 'oidc_issuer'
+    ) THEN
+        ALTER TABLE users ADD COLUMN oidc_issuer VARCHAR(255);
+    END IF;
+    IF NOT EXISTS (
+        SELECT 1 FROM information_schema.columns
+        WHERE table_name = 'users' AND column_name = 'oidc_subject'
+    ) THEN
+        ALTER TABLE users ADD COLUMN oidc_subject VARCHAR(255);
+    END IF;
+END $$;
+
+CREATE UNIQUE INDEX IF NOT EXISTS users_oidc_identity_unique
+    ON users (oidc_issuer, oidc_subject)
+    WHERE oidc_issuer IS NOT NULL AND oidc_subject IS NOT NULL;
+
 CREATE TABLE IF NOT EXISTS invitations (
     id         UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     token      VARCHAR(64) UNIQUE NOT NULL,

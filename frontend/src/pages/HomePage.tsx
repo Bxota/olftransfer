@@ -619,6 +619,10 @@ export default function HomePage() {
     navigate('/login')
   }
 
+  function handleSwitchAccount() {
+    window.location.assign('/auth/oidc/login?prompt=login')
+  }
+
   // ── Render ───────────────────────────────────────────────────────────────
 
   const hasFiles = files.length > 0
@@ -639,6 +643,7 @@ export default function HomePage() {
           {user?.is_admin && (
             <Link to="/admin" className="btn btn-ghost btn-sm">Admin</Link>
           )}
+          <button className="btn btn-ghost btn-sm" onClick={handleSwitchAccount}>Changer de compte</button>
           <button className="btn btn-ghost btn-sm" onClick={handleLogout}>Déconnexion</button>
         </div>
       </header>

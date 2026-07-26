@@ -7,9 +7,9 @@ from contextlib import asynccontextmanager
 from datetime import UTC, datetime, timedelta
 from io import BytesIO
 
-from fastapi import Depends, FastAPI, HTTPException, Query, Response
+from fastapi import Depends, FastAPI, HTTPException, Query, Request, Response
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
 from itsdangerous import BadSignature, SignatureExpired, URLSafeTimedSerializer
 from PIL import Image, ImageOps, UnidentifiedImageError
@@ -66,6 +66,12 @@ from .models import (
     UploadUrl,
     UserListItem,
     UserTransfer,
+)
+from .oidc import (
+    TRANSACTION_COOKIE,
+    begin_authorization,
+    complete_authorization,
+    find_or_create_user,
 )
 from .storage import (
     MULTIPART_THRESHOLD,
@@ -345,6 +351,48 @@ def _cleanup_file(path: str) -> None:
 
 
 # ── Auth ──────────────────────────────────────────────────────────────────────
+
+@app.get("/auth/oidc/login", tags=["Auth"], summary="Démarrer la connexion OpenID Connect")
+def oidc_login(prompt: str = Query(default="")):
+    if prompt not in ("", "login"):
+        raise HTTPException(status_code=400, detail="Paramètre prompt non pris en charge")
+    authorization_url, transaction = begin_authorization(prompt)
+    response = RedirectResponse(authorization_url, status_code=302)
+    response.set_cookie(
+        TRANSACTION_COOKIE,
+        transaction,
+        httponly=True,
+        secure=True,
+        samesite="lax",
+        max_age=10 * 60,
+        path="/",
+    )
+    return response
+
+
+@app.get("/auth/oidc/callback", tags=["Auth"], summary="Terminer la connexion OpenID Connect")
+def oidc_callback(
+    request: Request,
+    code: str = Query(default=""),
+    state: str = Query(default=""),
+    error: str = Query(default=""),
+):
+    if error:
+        raise HTTPException(status_code=401, detail=f"Connexion refusée par le fournisseur d’identité ({error})")
+    claims = complete_authorization(code, state, request.cookies.get(TRANSACTION_COOKIE))
+    user_id = find_or_create_user(claims)
+    response = RedirectResponse("/", status_code=303)
+    response.delete_cookie(TRANSACTION_COOKIE, path="/", secure=True, httponly=True, samesite="lax")
+    response.set_cookie(
+        "session",
+        create_session(user_id),
+        httponly=True,
+        secure=True,
+        samesite="lax",
+        max_age=60 * 60 * 24 * 7,
+    )
+    return response
+
 
 @app.post("/auth/login", tags=["Auth"], summary="Connexion", response_model=OkResponse)
 def login(body: LoginRequest, response: Response):

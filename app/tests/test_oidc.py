@@ -1,0 +1,62 @@
+import os
+import unittest
+import urllib.parse
+from unittest.mock import patch
+
+from fastapi import HTTPException
+
+from src.oidc import OIDCConfig, _backchannel_endpoint, begin_authorization, complete_authorization
+
+
+class OIDCFlowTests(unittest.TestCase):
+    def setUp(self):
+        self.environment = patch.dict(
+            os.environ,
+            {
+                "APP_SECRET": "test-secret-with-enough-entropy",
+                "OIDC_ISSUER": "https://auth.example.test/",
+                "OIDC_CLIENT_ID": "olftransfer",
+                "OIDC_REDIRECT_URI": "https://olf.example.test/auth/oidc/callback",
+                "OIDC_BACKCHANNEL_URL": "http://identity:8080",
+            },
+            clear=False,
+        )
+        self.environment.start()
+
+    def tearDown(self):
+        self.environment.stop()
+
+    def test_authorization_request_uses_pkce_s256(self):
+        authorization_url, transaction = begin_authorization("login")
+        parsed = urllib.parse.urlparse(authorization_url)
+        query = urllib.parse.parse_qs(parsed.query)
+
+        self.assertEqual(parsed.scheme + "://" + parsed.netloc, "https://auth.example.test")
+        self.assertEqual(query["response_type"], ["code"])
+        self.assertEqual(query["client_id"], ["olftransfer"])
+        self.assertEqual(query["code_challenge_method"], ["S256"])
+        self.assertEqual(query["prompt"], ["login"])
+        self.assertEqual(len(query["code_challenge"][0]), 43)
+        self.assertTrue(transaction)
+
+    def test_callback_rejects_state_before_network_exchange(self):
+        _, transaction = begin_authorization()
+        with self.assertRaises(HTTPException) as raised:
+            complete_authorization("code", "attacker-state", transaction)
+        self.assertEqual(raised.exception.status_code, 400)
+
+    def test_backchannel_keeps_only_endpoints_from_the_issuer(self):
+        cfg = OIDCConfig(
+            issuer="https://auth.example.test",
+            client_id="olftransfer",
+            redirect_uri="https://olf.example.test/auth/oidc/callback",
+            backchannel_url="http://identity:8080",
+        )
+        endpoint = _backchannel_endpoint(cfg, "https://auth.example.test/token")
+        self.assertEqual(endpoint, "http://identity:8080/token")
+        with self.assertRaises(HTTPException):
+            _backchannel_endpoint(cfg, "https://attacker.example/token")
+
+
+if __name__ == "__main__":
+    unittest.main()
