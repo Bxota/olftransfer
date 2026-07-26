@@ -360,6 +360,8 @@ body {
 
 .login-title { font-size: 18px; font-weight: 700; margin-bottom: 6px; }
 .login-sub { font-size: 14px; color: var(--subtext); margin-bottom: 28px; }
+.provider-button { min-height: 46px; }
+.provider-mark { width: 19px; height: 19px; stroke: var(--primary); stroke-width: 2; fill: none; stroke-linecap: round; }
 
 /* ── Bulk actions bar ── */
 #bulkBar {
