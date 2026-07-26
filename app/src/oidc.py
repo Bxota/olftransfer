@@ -52,7 +52,7 @@ def begin_authorization(prompt: str = "") -> tuple[str, str]:
         "response_type": "code",
         "client_id": cfg.client_id,
         "redirect_uri": cfg.redirect_uri,
-        "scope": "openid email",
+        "scope": "openid email profile",
         "state": state,
         "nonce": nonce,
         "code_challenge": challenge,
@@ -116,19 +116,24 @@ def find_or_create_user(claims: dict) -> str:
     cfg = config()
     subject = str(claims["sub"])
     email = str(claims["email"]).lower().strip()
+    pseudonym = claims.get("preferred_username")
+    if not isinstance(pseudonym, str) or not (pseudonym := pseudonym.strip()):
+        pseudonym = None
+    elif len(pseudonym) > 100:
+        raise HTTPException(status_code=400, detail="Pseudo OIDC invalide")
     if not subject or len(subject) > 255 or not email or len(email) > 254:
         raise HTTPException(status_code=400, detail="Identité OIDC invalide")
 
     with get_conn() as conn:
         cur = conn.cursor()
         cur.execute(
-            "SELECT id, email FROM users WHERE oidc_issuer = %s AND oidc_subject = %s FOR UPDATE",
+            "SELECT id, email, pseudonym FROM users WHERE oidc_issuer = %s AND oidc_subject = %s FOR UPDATE",
             (cfg.issuer, subject),
         )
         row = cur.fetchone()
         if row:
-            if row[1] != email:
-                cur.execute("UPDATE users SET email = %s WHERE id = %s", (email, row[0]))
+            if row[1] != email or row[2] != pseudonym:
+                cur.execute("UPDATE users SET email = %s, pseudonym = %s WHERE id = %s", (email, pseudonym, row[0]))
             return str(row[0])
 
         cur.execute("SELECT id, oidc_issuer, oidc_subject FROM users WHERE lower(email) = %s FOR UPDATE", (email,))
@@ -137,18 +142,18 @@ def find_or_create_user(claims: dict) -> str:
             if row[1] is not None and (row[1] != cfg.issuer or row[2] != subject):
                 raise HTTPException(status_code=409, detail="Cette adresse email est déjà liée à une autre identité")
             cur.execute(
-                "UPDATE users SET oidc_issuer = %s, oidc_subject = %s WHERE id = %s",
-                (cfg.issuer, subject, row[0]),
+                "UPDATE users SET oidc_issuer = %s, oidc_subject = %s, pseudonym = %s WHERE id = %s",
+                (cfg.issuer, subject, pseudonym, row[0]),
             )
             return str(row[0])
 
         cur.execute(
             """
-            INSERT INTO users (email, password_hash, oidc_issuer, oidc_subject)
-            VALUES (%s, '!oidc', %s, %s)
+            INSERT INTO users (email, password_hash, oidc_issuer, oidc_subject, pseudonym)
+            VALUES (%s, '!oidc', %s, %s, %s)
             RETURNING id
             """,
-            (email, cfg.issuer, subject),
+            (email, cfg.issuer, subject, pseudonym),
         )
         return str(cur.fetchone()[0])
 

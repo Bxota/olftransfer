@@ -9,6 +9,7 @@ import RequestDropPage from './pages/RequestDropPage'
 
 export interface User {
   email: string
+  pseudonym: string | null
   is_admin: boolean
   storage_quota_bytes: number
   storage_used_bytes: number

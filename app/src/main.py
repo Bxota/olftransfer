@@ -446,6 +446,7 @@ def me(user: dict = Depends(get_current_user)):
         used_bytes = int(cur.fetchone()[0])
     return MeResponse(
         email=user["email"],
+        pseudonym=user["pseudonym"],
         is_admin=user["is_admin"],
         storage_quota_bytes=user["storage_quota_bytes"],
         storage_used_bytes=used_bytes,

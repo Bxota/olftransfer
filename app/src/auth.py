@@ -76,10 +76,10 @@ def get_current_user(
     if x_api_key and expected_key and x_api_key == expected_key:
         with get_conn() as conn:
             cur = conn.cursor()
-            cur.execute("SELECT id, email, is_admin, storage_quota_bytes FROM users WHERE is_admin = TRUE LIMIT 1")
+            cur.execute("SELECT id, email, pseudonym, is_admin, storage_quota_bytes FROM users WHERE is_admin = TRUE LIMIT 1")
             row = cur.fetchone()
         if row:
-            return {"id": str(row[0]), "email": row[1], "is_admin": row[2], "storage_quota_bytes": row[3]}
+            return {"id": str(row[0]), "email": row[1], "pseudonym": row[2], "is_admin": row[3], "storage_quota_bytes": row[4]}
 
     # Session cookie auth
     user_id = get_session_user_id(session)
@@ -87,11 +87,11 @@ def get_current_user(
         raise HTTPException(status_code=401, detail="Not authenticated")
     with get_conn() as conn:
         cur = conn.cursor()
-        cur.execute("SELECT id, email, is_admin, storage_quota_bytes FROM users WHERE id = %s", (user_id,))
+        cur.execute("SELECT id, email, pseudonym, is_admin, storage_quota_bytes FROM users WHERE id = %s", (user_id,))
         row = cur.fetchone()
     if not row:
         raise HTTPException(status_code=401, detail="Not authenticated")
-    return {"id": str(row[0]), "email": row[1], "is_admin": row[2], "storage_quota_bytes": row[3]}
+    return {"id": str(row[0]), "email": row[1], "pseudonym": row[2], "is_admin": row[3], "storage_quota_bytes": row[4]}
 
 
 def get_optional_user(session: str | None = Cookie(default=None)) -> dict | None:
@@ -100,11 +100,11 @@ def get_optional_user(session: str | None = Cookie(default=None)) -> dict | None
         return None
     with get_conn() as conn:
         cur = conn.cursor()
-        cur.execute("SELECT id, email, is_admin, storage_quota_bytes FROM users WHERE id = %s", (user_id,))
+        cur.execute("SELECT id, email, pseudonym, is_admin, storage_quota_bytes FROM users WHERE id = %s", (user_id,))
         row = cur.fetchone()
     if not row:
         return None
-    return {"id": str(row[0]), "email": row[1], "is_admin": row[2], "storage_quota_bytes": row[3]}
+    return {"id": str(row[0]), "email": row[1], "pseudonym": row[2], "is_admin": row[3], "storage_quota_bytes": row[4]}
 
 
 def require_admin(user: dict = Depends(get_current_user)) -> dict:

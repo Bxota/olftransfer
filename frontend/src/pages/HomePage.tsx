@@ -640,6 +640,11 @@ export default function HomePage() {
           <span className="logo-name">OlfTransfer</span>
         </Link>
         <div className="header-actions">
+          {user?.pseudonym && (
+            <span title={user.email} style={{ fontSize: 13, color: 'var(--subtext)' }}>
+              Connecté en tant que {user.pseudonym}
+            </span>
+          )}
           {user?.is_admin && (
             <Link to="/admin" className="btn btn-ghost btn-sm">Admin</Link>
           )}

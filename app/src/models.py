@@ -18,6 +18,7 @@ class LoginRequest(BaseModel):
 
 class MeResponse(BaseModel):
     email: str
+    pseudonym: str | None = None
     is_admin: bool
     storage_quota_bytes: int
     storage_used_bytes: int
