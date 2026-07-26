@@ -71,8 +71,10 @@ from .oidc import (
     TRANSACTION_COOKIE,
     begin_authorization,
     complete_authorization,
-    config as oidc_config,
     find_or_create_user,
+)
+from .oidc import (
+    config as oidc_config,
 )
 from .storage import (
     MULTIPART_THRESHOLD,
