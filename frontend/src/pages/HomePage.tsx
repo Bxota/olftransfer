@@ -648,6 +648,7 @@ export default function HomePage() {
           {user?.is_admin && (
             <Link to="/admin" className="btn btn-ghost btn-sm">Admin</Link>
           )}
+          <a className="btn btn-ghost btn-sm" href="/auth/passerelle/account">Gérer mon compte Passerelle</a>
           <button className="btn btn-ghost btn-sm" onClick={handleSwitchAccount}>Changer de compte</button>
           <button className="btn btn-ghost btn-sm" onClick={handleLogout}>Déconnexion</button>
         </div>

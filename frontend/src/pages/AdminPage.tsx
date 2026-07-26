@@ -110,6 +110,7 @@ export default function AdminPage() {
         </Link>
         <div className="header-actions">
           <Link to="/" className="btn btn-ghost btn-sm">Retour</Link>
+          <a className="btn btn-ghost btn-sm" href="/auth/passerelle/account">Gérer mon compte Passerelle</a>
           <button className="btn btn-ghost btn-sm" onClick={handleLogout}>Déconnexion</button>
         </div>
       </header>

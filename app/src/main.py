@@ -71,6 +71,7 @@ from .oidc import (
     TRANSACTION_COOKIE,
     begin_authorization,
     complete_authorization,
+    config as oidc_config,
     find_or_create_user,
 )
 from .storage import (
@@ -368,6 +369,11 @@ def oidc_login(prompt: str = Query(default="")):
         path="/",
     )
     return response
+
+
+@app.get("/auth/passerelle/account", tags=["Auth"], summary="Gérer le compte Passerelle")
+def passerelle_account(_: dict = Depends(get_current_user)):
+    return RedirectResponse(f"{oidc_config().issuer}/account", status_code=302)
 
 
 @app.get("/auth/oidc/callback", tags=["Auth"], summary="Terminer la connexion OpenID Connect")
