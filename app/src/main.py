@@ -386,7 +386,10 @@ def oidc_callback(
     error: str = Query(default=""),
 ):
     if error:
-        raise HTTPException(status_code=401, detail=f"Connexion refusée par le fournisseur d’identité ({error})")
+        location = "/login?error=access_denied" if error == "access_denied" else "/login?error=oidc"
+        response = RedirectResponse(location, status_code=303)
+        response.delete_cookie(TRANSACTION_COOKIE, path="/", secure=True, httponly=True, samesite="lax")
+        return response
     claims = complete_authorization(code, state, request.cookies.get(TRANSACTION_COOKIE))
     user_id = find_or_create_user(claims)
     response = RedirectResponse("/", status_code=303)
