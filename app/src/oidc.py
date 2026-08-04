@@ -169,7 +169,9 @@ def is_user_authorized(subject: str) -> bool | None:
         return False
     cfg = config()
     try:
-        payload = _get_json(f"{cfg.backchannel_url}/internal/olftransfer/authorizations/{urllib.parse.quote(subject, safe='')}")
+        client_id = urllib.parse.quote(cfg.client_id, safe="")
+        user_id = urllib.parse.quote(subject, safe="")
+        payload = _get_json(f"{cfg.backchannel_url}/internal/applications/{client_id}/authorizations/{user_id}")
     except HTTPException:
         return None
     authorized = payload.get("authorized")

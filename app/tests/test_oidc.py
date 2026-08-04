@@ -5,7 +5,7 @@ from unittest.mock import patch
 
 from fastapi import HTTPException
 
-from src.oidc import OIDCConfig, _backchannel_endpoint, begin_authorization, complete_authorization
+from src.oidc import OIDCConfig, _backchannel_endpoint, begin_authorization, complete_authorization, is_user_authorized
 
 
 class OIDCFlowTests(unittest.TestCase):
@@ -56,6 +56,13 @@ class OIDCFlowTests(unittest.TestCase):
         self.assertEqual(endpoint, "http://identity:8080/token")
         with self.assertRaises(HTTPException):
             _backchannel_endpoint(cfg, "https://attacker.example/token")
+
+    @patch("src.oidc._get_json", return_value={"authorized": True})
+    def test_authorization_check_uses_configured_client(self, get_json):
+        self.assertTrue(is_user_authorized("user/id"))
+        get_json.assert_called_once_with(
+            "http://identity:8080/internal/applications/olftransfer/authorizations/user%2Fid"
+        )
 
 
 if __name__ == "__main__":
