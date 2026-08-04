@@ -1,11 +1,13 @@
 import { FormEvent, useEffect, useState } from 'react'
-import { Link, useNavigate } from 'react-router-dom'
+import { useNavigate } from 'react-router-dom'
 import { useAuth } from '../App'
 import { formatBytes } from '../lib/utils'
 import UserIcon from '../icons/user-icon'
+import { AppNavigation } from '../components/AppNavigation'
 
 interface UserItem {
   id: string
+  pseudonym: string | null
   email: string
   is_admin: boolean
   created_at: string
@@ -97,67 +99,18 @@ export default function AdminPage() {
 
   return (
     <>
-      <header className="header">
-        <Link to="/" className="logo">
-          <div className="logo-icon">
-            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5">
-              <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" />
-              <polyline points="17 8 12 3 7 8" />
-              <line x1="12" y1="3" x2="12" y2="15" />
-            </svg>
-          </div>
-          <span className="logo-name">OlfTransfer</span>
-        </Link>
-        <div className="header-actions">
-          <Link to="/" className="btn btn-ghost btn-sm">Retour</Link>
-          <a className="btn btn-ghost btn-sm" href="/auth/passerelle/account" target="_blank" rel="noopener noreferrer">Gérer mon compte Passerelle</a>
-          <button className="btn btn-ghost btn-sm" onClick={handleLogout}>Déconnexion</button>
-        </div>
-      </header>
+      <AppNavigation />
 
-      <main className="page">
+      <main className="page app-main">
         <div className="page-admin">
           <div className="admin-grid">
             {/* Invite */}
             <div className="card">
               <div className="card-body">
-                <p className="section-label">Inviter un utilisateur</p>
-                <form onSubmit={handleInvite}>
-                  <div className="field">
-                    <label htmlFor="inviteEmail">Adresse email</label>
-                    <input
-                      id="inviteEmail"
-                      type="email"
-                      placeholder="ami@exemple.com"
-                      autoFocus
-                      value={inviteEmail}
-                      onChange={e => setInviteEmail(e.target.value)}
-                    />
-                  </div>
-                  {inviteError && <div className="alert alert-error mt-3">{inviteError}</div>}
-                  {inviteSuccess && (
-                    <div className="mt-3">
-                      <div className="alert alert-success">{inviteSuccess.msg}</div>
-                      {inviteSuccess.url && (
-                        <div className="share-box mt-3">
-                          <span className="share-link">{inviteSuccess.url}</span>
-                          <button
-                            type="button"
-                            className="copy-btn"
-                            onClick={() => {
-                              navigator.clipboard.writeText(inviteSuccess.url!)
-                            }}
-                          >
-                            Copier
-                          </button>
-                        </div>
-                      )}
-                    </div>
-                  )}
-                  <button type="submit" className="btn btn-primary btn-full mt-4" disabled={inviteLoading}>
-                    {inviteLoading ? 'Envoi…' : "Envoyer l'invitation"}
-                  </button>
-                </form>
+                <p className="section-label">Gestion des accès</p>
+                <h2 style={{ fontSize: 18, marginBottom: 8 }}>Invitations et autorisations</h2>
+                <p className="text-subtext" style={{ fontSize: 13, marginBottom: 18 }}>Les comptes et leurs accès sont gérés dans Passerelle.</p>
+                <a className="btn btn-primary btn-full" href="/auth/passerelle/admin">Ouvrir l’administration Passerelle</a>
               </div>
             </div>
 
@@ -175,7 +128,8 @@ export default function AdminPage() {
                         <UserIcon size={16} strokeWidth={2} />
                       </div>
                       <div className="file-info">
-                        <div className="file-name">{u.email}</div>
+                        <div className="file-name">{u.pseudonym || 'Pseudo non défini'}</div>
+                        <div className="user-email">{u.email}</div>
                         <div className="file-size">
                           {u.is_admin ? 'Admin · ' : ''}
                           Membre depuis {new Date(u.created_at).toLocaleDateString('fr-FR')}
@@ -265,7 +219,10 @@ function StatsContent({ stats }: { stats: any }) {
               const barColor = pct >= 90 ? '#EF4444' : pct >= 70 ? '#F59E0B' : 'var(--success)'
               return (
                 <tr key={u.email}>
-                  <td style={{ padding: '8px 6px', fontSize: '.875rem' }}>{u.email}</td>
+                  <td style={{ padding: '8px 6px', fontSize: '.875rem' }}>
+                    <div>{u.pseudonym || 'Pseudo non défini'}</div>
+                    <div className="user-email">{u.email}</div>
+                  </td>
                   <td style={{ padding: '8px 6px', fontSize: '.875rem', textAlign: 'right' }}>
                     <div>{formatBytes(u.active_bytes)}</div>
                     <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'flex-end', gap: 6, marginTop: 3 }}>

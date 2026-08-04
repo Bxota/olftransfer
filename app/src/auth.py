@@ -9,6 +9,7 @@ from fastapi import Cookie, Depends, Header, HTTPException
 from itsdangerous import BadSignature, SignatureExpired, URLSafeTimedSerializer
 
 from .db import get_conn
+from .oidc import is_user_authorized
 
 SESSION_MAX_AGE = 60 * 60 * 24 * 7  # 7 jours
 _password_hasher = PasswordHasher()
@@ -87,10 +88,13 @@ def get_current_user(
         raise HTTPException(status_code=401, detail="Not authenticated")
     with get_conn() as conn:
         cur = conn.cursor()
-        cur.execute("SELECT id, email, pseudonym, is_admin, storage_quota_bytes FROM users WHERE id = %s", (user_id,))
+        cur.execute("SELECT id, email, pseudonym, is_admin, storage_quota_bytes, oidc_subject FROM users WHERE id = %s", (user_id,))
         row = cur.fetchone()
+    authorization = is_user_authorized(str(row[5])) if row and row[5] is not None else True
     if not row:
         raise HTTPException(status_code=401, detail="Not authenticated")
+    if authorization is False:
+        raise HTTPException(status_code=401, detail="Application access revoked", headers={"X-Auth-State": "access-revoked"})
     return {"id": str(row[0]), "email": row[1], "pseudonym": row[2], "is_admin": row[3], "storage_quota_bytes": row[4]}
 
 
@@ -100,9 +104,10 @@ def get_optional_user(session: str | None = Cookie(default=None)) -> dict | None
         return None
     with get_conn() as conn:
         cur = conn.cursor()
-        cur.execute("SELECT id, email, pseudonym, is_admin, storage_quota_bytes FROM users WHERE id = %s", (user_id,))
+        cur.execute("SELECT id, email, pseudonym, is_admin, storage_quota_bytes, oidc_subject FROM users WHERE id = %s", (user_id,))
         row = cur.fetchone()
-    if not row:
+    authorization = is_user_authorized(str(row[5])) if row and row[5] is not None else True
+    if not row or authorization is False:
         return None
     return {"id": str(row[0]), "email": row[1], "pseudonym": row[2], "is_admin": row[3], "storage_quota_bytes": row[4]}
 

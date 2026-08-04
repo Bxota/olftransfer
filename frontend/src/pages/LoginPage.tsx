@@ -1,41 +1,54 @@
-import UploadIcon from '../icons/upload-icon'
-import passerelleMark from '../assets/passerelle-mark.svg'
+import { useEffect } from 'react'
 import { useSearchParams } from 'react-router-dom'
 
 export default function LoginPage() {
   const [searchParams] = useSearchParams()
   const error = searchParams.get('error')
-  return (
-    <div className="login-wrap">
-      <div className="login-card">
-        <div className="login-logo">
-          <Logo />
-          <span className="logo-name">OlfTransfer</span>
-        </div>
-        <h1 className="login-title">Connexion</h1>
-        <p className="login-sub">Utilise ton compte Passerelle pour envoyer et gérer tes fichiers.</p>
-        {error === 'access_denied' && <p className="alert alert-error" role="alert">Votre compte n’est pas autorisé à utiliser OlfTransfer.</p>}
-        {error === 'oidc' && <p className="alert alert-error" role="alert">La connexion avec Passerelle n’a pas pu aboutir. Réessayez.</p>}
-        <a className="btn btn-outline btn-full mt-4 provider-button" href="/auth/oidc/login">
-          <PasserelleMark />
-          Se connecter avec Passerelle
-        </a>
-        <a className="btn btn-ghost btn-full mt-3" href="/auth/oidc/login?prompt=login">
-          Se connecter avec un autre compte
-        </a>
-      </div>
-    </div>
-  )
-}
+  const loggedOut = searchParams.get('logged_out') === '1'
 
-function PasserelleMark() {
-  return <img className="provider-mark" src={passerelleMark} alt="" />
-}
+  useEffect(() => {
+    if (!error && !loggedOut) window.location.replace('/auth/oidc/login')
+  }, [error, loggedOut])
 
-function Logo() {
+  if (loggedOut) {
+    return (
+      <main className="login-wrap">
+        <section className="login-card">
+          <p className="section-label">Déconnexion</p>
+          <h1 className="login-title">Vous êtes déconnecté</h1>
+          <a className="btn btn-primary btn-full" href="/auth/oidc/login">Se connecter</a>
+        </section>
+      </main>
+    )
+  }
+
+  if (error === 'access_denied') {
+    return (
+      <main className="login-wrap">
+        <section className="login-card" aria-labelledby="access-denied-title">
+          <p className="section-label">Accès non autorisé</p>
+          <h1 id="access-denied-title" className="login-title">Votre compte n’a pas accès à OlfTransfer</h1>
+          <p className="login-sub">Demandez à un administrateur Passerelle d’autoriser OlfTransfer pour votre compte, puis réessayez.</p>
+          <a className="btn btn-primary btn-full" href="/auth/oidc/login?prompt=login">Essayer avec un autre compte</a>
+        </section>
+      </main>
+    )
+  }
+
+  if (error === 'oidc') {
+    return (
+      <main className="login-wrap">
+        <section className="login-card" aria-labelledby="connection-error-title">
+          <p className="section-label">Connexion interrompue</p>
+          <h1 id="connection-error-title" className="login-title">La connexion avec Passerelle n’a pas abouti</h1>
+          <p className="login-sub">Réessayez. Si le problème persiste, vérifiez que Passerelle est disponible.</p>
+          <a className="btn btn-primary btn-full" href="/auth/oidc/login">Réessayer</a>
+        </section>
+      </main>
+    )
+  }
+
   return (
-    <div className="logo-icon">
-      <UploadIcon size={18} strokeWidth={2.5} />
-    </div>
+    <main className="login-wrap" aria-live="polite"><p>Redirection vers Passerelle…</p></main>
   )
 }

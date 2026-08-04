@@ -158,6 +158,24 @@ def find_or_create_user(claims: dict) -> str:
         return str(cur.fetchone()[0])
 
 
+def is_user_authorized(subject: str) -> bool | None:
+    """Return None when the entitlement service is temporarily unavailable.
+
+    A missing or older Passerelle endpoint must not turn a valid session into an
+    OIDC redirect loop during a rolling deployment. A confirmed `false` still
+    revokes the session immediately.
+    """
+    if not subject:
+        return False
+    cfg = config()
+    try:
+        payload = _get_json(f"{cfg.backchannel_url}/internal/olftransfer/authorizations/{urllib.parse.quote(subject, safe='')}")
+    except HTTPException:
+        return None
+    authorized = payload.get("authorized")
+    return authorized if isinstance(authorized, bool) else None
+
+
 def _get_json(endpoint: str) -> dict:
     try:
         with urllib.request.urlopen(endpoint, timeout=5) as response:

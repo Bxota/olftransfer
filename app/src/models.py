@@ -47,6 +47,7 @@ class InviteValidateResponse(BaseModel):
 
 class UserListItem(BaseModel):
     id: str
+    pseudonym: str | None = None
     email: str
     is_admin: bool
     created_at: datetime

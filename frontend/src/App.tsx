@@ -18,12 +18,14 @@ export interface User {
 interface AuthContextType {
   user: User | null
   loading: boolean
+  accessRevoked: boolean
   setUser: (u: User | null) => void
 }
 
 export const AuthContext = createContext<AuthContextType>({
   user: null,
   loading: true,
+  accessRevoked: false,
   setUser: () => {},
 })
 
@@ -34,19 +36,36 @@ export function useAuth() {
 function AuthProvider({ children }: { children: ReactNode }) {
   const [user, setUser] = useState<User | null>(null)
   const [loading, setLoading] = useState(true)
+  const [accessRevoked, setAccessRevoked] = useState(false)
 
   useEffect(() => {
+    const onStorage = (event: StorageEvent) => {
+      if (event.key !== 'olf-auth-event' || !event.newValue) return
+      try {
+        if (JSON.parse(event.newValue).type === 'logout') setUser(null)
+      } catch {
+        // Ignore malformed events from an unrelated client.
+      }
+    }
+    window.addEventListener('storage', onStorage)
     fetch('/auth/me')
-      .then(r => (r.ok ? r.json() : null))
+      .then(async r => {
+        if (!r.ok) {
+          setAccessRevoked(r.headers.get('X-Auth-State') === 'access-revoked')
+          return null
+        }
+        return r.json()
+      })
       .then(u => {
         setUser(u)
         setLoading(false)
       })
       .catch(() => setLoading(false))
+    return () => window.removeEventListener('storage', onStorage)
   }, [])
 
   return (
-    <AuthContext.Provider value={{ user, loading, setUser }}>
+    <AuthContext.Provider value={{ user, loading, accessRevoked, setUser }}>
       {children}
     </AuthContext.Provider>
   )
@@ -59,9 +78,9 @@ function ProtectedRoute({
   children: ReactNode
   adminOnly?: boolean
 }) {
-  const { user, loading } = useAuth()
+  const { user, loading, accessRevoked } = useAuth()
   if (loading) return null
-  if (!user) return <Navigate to="/login" replace />
+  if (!user) return <Navigate to={accessRevoked ? '/login?error=access_denied' : '/login'} replace />
   if (adminOnly && !user.is_admin) return <Navigate to="/" replace />
   return <>{children}</>
 }

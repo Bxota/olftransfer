@@ -2,6 +2,7 @@ import os
 import secrets
 import shutil
 import tempfile
+import urllib.parse
 import zipfile
 from contextlib import asynccontextmanager
 from datetime import UTC, datetime, timedelta
@@ -375,7 +376,16 @@ def oidc_login(prompt: str = Query(default="")):
 
 @app.get("/auth/passerelle/account", tags=["Auth"], summary="Gérer le compte Passerelle")
 def passerelle_account(_: dict = Depends(get_current_user)):
-    return RedirectResponse(f"{oidc_config().issuer}/account", status_code=302)
+    cfg = oidc_config()
+    return_to = cfg.redirect_uri.rsplit("/auth/oidc/callback", 1)[0] + "/auth/logout"
+    return RedirectResponse(f"{cfg.issuer}/account?return_to={urllib.parse.quote(return_to, safe='')}", status_code=302)
+
+
+@app.get("/auth/passerelle/admin", tags=["Auth"], summary="Administrer Passerelle")
+def passerelle_admin(_: dict = Depends(get_current_user)):
+    cfg = oidc_config()
+    return_to = cfg.redirect_uri.rsplit("/auth/oidc/callback", 1)[0] + "/auth/logout"
+    return RedirectResponse(f"{cfg.issuer}/admin?return_to={urllib.parse.quote(return_to, safe='')}", status_code=302)
 
 
 @app.get("/auth/oidc/callback", tags=["Auth"], summary="Terminer la connexion OpenID Connect")
@@ -438,6 +448,30 @@ def login(body: LoginRequest, response: Response):
 def logout(response: Response):
     response.delete_cookie("session")
     return OkResponse()
+
+
+@app.get("/auth/logout", tags=["Auth"], summary="Déconnexion complète")
+def logout_redirect(request: Request):
+    """Clear the local session, then clear the Passerelle SSO session.
+
+    A browser redirect is required here: only Passerelle can clear its own
+    host-only cookie.  The return URL is fixed to this application's login
+    page so this endpoint cannot become an open redirect.
+    """
+    # Passerelle returns here after clearing its host-only cookie.
+    # Do not start the federation redirect a second time.
+    if request.query_params.get("logged_out") == "1":
+        response = RedirectResponse("/login?logged_out=1", status_code=303)
+        response.delete_cookie("session", path="/")
+        return response
+    cfg = oidc_config()
+    return_to = cfg.redirect_uri.rsplit("/auth/oidc/callback", 1)[0] + "/auth/logout"
+    response = RedirectResponse(
+        f"{cfg.issuer}/logout?return_to={urllib.parse.quote(return_to, safe='')}",
+        status_code=303,
+    )
+    response.delete_cookie("session", path="/")
+    return response
 
 
 @app.get("/auth/me", tags=["Auth"], summary="Profil de l'utilisateur connecté", response_model=MeResponse)
@@ -553,9 +587,9 @@ def validate_invite(token: str):
 def list_users():
     with get_conn() as conn:
         cur = conn.cursor()
-        cur.execute("SELECT id, email, is_admin, created_at, storage_quota_bytes FROM users ORDER BY created_at")
+        cur.execute("SELECT id, pseudonym, email, is_admin, created_at, storage_quota_bytes FROM users ORDER BY created_at")
         rows = cur.fetchall()
-    return [UserListItem(id=str(r[0]), email=r[1], is_admin=r[2], created_at=r[3], storage_quota_bytes=r[4]) for r in rows]
+    return [UserListItem(id=str(r[0]), pseudonym=r[1], email=r[2], is_admin=r[3], created_at=r[4], storage_quota_bytes=r[5]) for r in rows]
 
 
 @app.patch("/admin/users/{user_id}/quota", tags=["Admin"], summary="Modifier le quota de stockage", response_model=OkResponse, dependencies=[Depends(require_admin)])
@@ -599,7 +633,8 @@ def admin_stats(refresh: bool = Query(default=False, description="Forcer le rafr
         total_downloads = int(cur.fetchone()[0])
 
         cur.execute("""
-            SELECT u.email,
+            SELECT u.pseudonym,
+                   u.email,
                    u.storage_quota_bytes,
                    (SELECT COUNT(*) FROM transfers t
                     WHERE t.user_id = u.id AND t.confirmed_at IS NOT NULL
@@ -616,12 +651,13 @@ def admin_stats(refresh: bool = Query(default=False, description="Forcer le rafr
         """)
         users_stats = [
             {
-                "email": r[0],
-                "storage_quota_bytes": r[1],
-                "active_transfers": r[2],
-                "total_transfers": r[3],
-                "active_bytes": int(r[4]),
-                "downloads": int(r[5]),
+                "pseudonym": r[0],
+                "email": r[1],
+                "storage_quota_bytes": r[2],
+                "active_transfers": r[3],
+                "total_transfers": r[4],
+                "active_bytes": int(r[5]),
+                "downloads": int(r[6]),
             }
             for r in cur.fetchall()
         ]

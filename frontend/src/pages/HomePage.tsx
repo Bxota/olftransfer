@@ -16,6 +16,7 @@ import type { AnimatedIconHandle } from '../icons/types'
 import { formatBytes, formatSize, formatDate, getExt, getStem, getFileCategory, runWithConcurrency, FileCategory } from '../lib/utils'
 import { CHUNK_SIZE, UPLOAD_CONCURRENCY, MultipartEndpoints, uploadMultipart, uploadSingle } from '../lib/upload'
 import { PreviewModal, PreviewKind } from '../components/PreviewModal'
+import { AppNavigation } from '../components/AppNavigation'
 
 // ── Types ────────────────────────────────────────────────────────────────────
 
@@ -143,7 +144,7 @@ function generateSparkline(token: string, downloadCount: number): number[] {
 
 export default function HomePage() {
   const navigate = useNavigate()
-  const { user, setUser } = useAuth()
+  const { user } = useAuth()
 
   // Files
   const [files, setFiles] = useState<File[]>([])
@@ -613,16 +614,6 @@ export default function HomePage() {
     }
   }
 
-  async function handleLogout() {
-    await fetch('/auth/logout', { method: 'POST' })
-    setUser(null)
-    navigate('/login')
-  }
-
-  function handleSwitchAccount() {
-    window.location.assign('/auth/oidc/login?prompt=login')
-  }
-
   // ── Render ───────────────────────────────────────────────────────────────
 
   const hasFiles = files.length > 0
@@ -632,27 +623,7 @@ export default function HomePage() {
 
   return (
     <>
-      <header className="header">
-        <Link to="/" className="logo">
-          <div className="logo-icon">
-            <UploadIcon size={18} strokeWidth={2.5} />
-          </div>
-          <span className="logo-name">OlfTransfer</span>
-        </Link>
-        <div className="header-actions">
-          {user?.pseudonym && (
-            <span title={user.email} style={{ fontSize: 13, color: 'var(--subtext)' }}>
-              Connecté en tant que {user.pseudonym}
-            </span>
-          )}
-          {user?.is_admin && (
-            <Link to="/admin" className="btn btn-ghost btn-sm">Admin</Link>
-          )}
-          <a className="btn btn-ghost btn-sm" href="/auth/passerelle/account" target="_blank" rel="noopener noreferrer">Gérer mon compte Passerelle</a>
-          <button className="btn btn-ghost btn-sm" onClick={handleSwitchAccount}>Changer de compte</button>
-          <button className="btn btn-ghost btn-sm" onClick={handleLogout}>Déconnexion</button>
-        </div>
-      </header>
+      <AppNavigation />
 
       {globalDragOver && (
         <div className="drop-overlay">
@@ -667,7 +638,7 @@ export default function HomePage() {
         </div>
       )}
 
-      <main className="page">
+      <main className="page app-main">
         <div className="page-narrow">
 
           {resumeBanner.show && (
