@@ -27,6 +27,14 @@ class OIDCConfig:
     backchannel_url: str
 
 
+@dataclass(frozen=True)
+class OIDCResult:
+    claims: dict
+    id_token: str
+    access_token: str
+    refresh_token: str | None
+
+
 def config() -> OIDCConfig:
     issuer = os.environ["OIDC_ISSUER"].rstrip("/")
     return OIDCConfig(
@@ -64,7 +72,7 @@ def begin_authorization(prompt: str = "") -> tuple[str, str]:
     return f"{cfg.issuer}/authorize?{query}", transaction
 
 
-def complete_authorization(code: str, state: str, transaction: str | None) -> dict:
+def complete_authorization(code: str, state: str, transaction: str | None) -> OIDCResult:
     if not code or not state or not transaction:
         raise HTTPException(status_code=400, detail="Réponse OIDC incomplète")
     try:
@@ -91,6 +99,9 @@ def complete_authorization(code: str, state: str, transaction: str | None) -> di
     id_token = token_payload.get("id_token")
     if not isinstance(id_token, str):
         raise HTTPException(status_code=502, detail="Le fournisseur OIDC n’a pas renvoyé de jeton d’identité")
+    access_token = token_payload.get("access_token")
+    if not isinstance(access_token, str):
+        raise HTTPException(status_code=502, detail="Le fournisseur OIDC n’a pas renvoyé de jeton d’accès")
 
     try:
         jwks_uri = _backchannel_endpoint(cfg, metadata["jwks_uri"])
@@ -109,7 +120,21 @@ def complete_authorization(code: str, state: str, transaction: str | None) -> di
         raise HTTPException(status_code=401, detail="Nonce OIDC invalide")
     if claims.get("email_verified") is not True or not isinstance(claims.get("email"), str):
         raise HTTPException(status_code=403, detail="Une adresse email vérifiée est requise")
-    return claims
+    userinfo_endpoint = metadata.get("userinfo_endpoint")
+    if not isinstance(userinfo_endpoint, str):
+        raise HTTPException(status_code=502, detail="Endpoint userinfo OIDC absent")
+    userinfo = _get_json(_backchannel_endpoint(cfg, userinfo_endpoint), access_token)
+    if not isinstance(userinfo.get("sub"), str) or not hmac.compare_digest(userinfo["sub"], str(claims["sub"])):
+        raise HTTPException(status_code=401, detail="Sujet userinfo OIDC incohérent")
+    if userinfo.get("email_verified") is not True or not isinstance(userinfo.get("email"), str):
+        raise HTTPException(status_code=403, detail="Une adresse email vérifiée est requise")
+    refresh_token = token_payload.get("refresh_token")
+    return OIDCResult(
+        claims=userinfo,
+        id_token=id_token,
+        access_token=access_token,
+        refresh_token=refresh_token if isinstance(refresh_token, str) else None,
+    )
 
 
 def find_or_create_user(claims: dict) -> str:
@@ -178,9 +203,12 @@ def is_user_authorized(subject: str) -> bool | None:
     return authorized if isinstance(authorized, bool) else None
 
 
-def _get_json(endpoint: str) -> dict:
+def _get_json(endpoint: str, bearer_token: str = "") -> dict:
     try:
-        with urllib.request.urlopen(endpoint, timeout=5) as response:
+        request = urllib.request.Request(endpoint, headers={"Accept": "application/json"})
+        if bearer_token:
+            request.add_header("Authorization", f"Bearer {bearer_token}")
+        with urllib.request.urlopen(request, timeout=5) as response:
             return json.load(response)
     except (OSError, ValueError, urllib.error.HTTPError) as exc:
         raise HTTPException(status_code=502, detail="Fournisseur OIDC indisponible") from exc
@@ -206,3 +234,22 @@ def _post_form(endpoint: str, values: dict[str, str]) -> dict:
             return json.load(response)
     except (OSError, ValueError, urllib.error.HTTPError) as exc:
         raise HTTPException(status_code=502, detail="Échange de jeton OIDC impossible") from exc
+
+
+def end_session_url(id_token: str) -> str:
+    cfg = config()
+    metadata = _get_json(f"{cfg.backchannel_url}/.well-known/openid-configuration")
+    endpoint = metadata.get("end_session_endpoint")
+    if not isinstance(endpoint, str):
+        raise HTTPException(status_code=502, detail="Endpoint de déconnexion OIDC absent")
+    published_endpoint = urllib.parse.urlparse(endpoint)
+    issuer = urllib.parse.urlparse(cfg.issuer)
+    if published_endpoint.scheme != issuer.scheme or published_endpoint.netloc != issuer.netloc:
+        raise HTTPException(status_code=502, detail="Endpoint OIDC incohérent")
+    application_origin = urllib.parse.urlparse(cfg.redirect_uri)
+    post_logout_redirect_uri = urllib.parse.urlunparse((application_origin.scheme, application_origin.netloc, "/auth/logout", "", "logged_out=1", ""))
+    return endpoint + "?" + urllib.parse.urlencode({
+        "id_token_hint": id_token,
+        "client_id": cfg.client_id,
+        "post_logout_redirect_uri": post_logout_redirect_uri,
+    })

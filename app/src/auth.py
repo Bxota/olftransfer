@@ -19,17 +19,34 @@ def _signer() -> URLSafeTimedSerializer:
     return URLSafeTimedSerializer(os.environ["APP_SECRET"])
 
 
-def create_session(user_id: str) -> str:
-    return _signer().dumps(user_id)
+def create_session(user_id: str, id_token: str | None = None) -> str:
+    return _signer().dumps({"user_id": user_id, "id_token": id_token})
 
 
-def get_session_user_id(session: str | None) -> str | None:
+def _session_payload(session: str | None) -> dict | None:
     if not session:
         return None
     try:
-        return _signer().loads(session, max_age=SESSION_MAX_AGE)
+        payload = _signer().loads(session, max_age=SESSION_MAX_AGE)
     except (BadSignature, SignatureExpired):
         return None
+    if isinstance(payload, str):
+        return {"user_id": payload, "id_token": None}
+    if isinstance(payload, dict) and isinstance(payload.get("user_id"), str):
+        return payload
+    return None
+
+
+def get_session_user_id(session: str | None) -> str | None:
+    payload = _session_payload(session)
+    return payload["user_id"] if payload else None
+
+
+def get_session_id_token(session: str | None) -> str | None:
+    payload = _session_payload(session)
+    if not payload or not isinstance(payload.get("id_token"), str):
+        return None
+    return payload["id_token"]
 
 
 def hash_password(password: str) -> str:

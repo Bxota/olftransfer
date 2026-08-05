@@ -20,6 +20,7 @@ from .auth import (
     create_session,
     get_current_user,
     get_optional_user,
+    get_session_id_token,
     hash_password,
     password_needs_rehash,
     require_admin,
@@ -72,6 +73,7 @@ from .oidc import (
     TRANSACTION_COOKIE,
     begin_authorization,
     complete_authorization,
+    end_session_url,
     find_or_create_user,
 )
 from .oidc import (
@@ -400,13 +402,13 @@ def oidc_callback(
         response = RedirectResponse(location, status_code=303)
         response.delete_cookie(TRANSACTION_COOKIE, path="/", secure=True, httponly=True, samesite="lax")
         return response
-    claims = complete_authorization(code, state, request.cookies.get(TRANSACTION_COOKIE))
-    user_id = find_or_create_user(claims)
+    result = complete_authorization(code, state, request.cookies.get(TRANSACTION_COOKIE))
+    user_id = find_or_create_user(result.claims)
     response = RedirectResponse("/", status_code=303)
     response.delete_cookie(TRANSACTION_COOKIE, path="/", secure=True, httponly=True, samesite="lax")
     response.set_cookie(
         "session",
-        create_session(user_id),
+        create_session(user_id, result.id_token),
         httponly=True,
         secure=True,
         samesite="lax",
@@ -464,12 +466,12 @@ def logout_redirect(request: Request):
         response = RedirectResponse("/login?logged_out=1", status_code=303)
         response.delete_cookie("session", path="/")
         return response
-    cfg = oidc_config()
-    return_to = cfg.redirect_uri.rsplit("/auth/oidc/callback", 1)[0] + "/auth/logout"
-    response = RedirectResponse(
-        f"{cfg.issuer}/logout?return_to={urllib.parse.quote(return_to, safe='')}",
-        status_code=303,
-    )
+    id_token = get_session_id_token(request.cookies.get("session"))
+    if not id_token:
+        response = RedirectResponse("/login?logged_out=1", status_code=303)
+        response.delete_cookie("session", path="/")
+        return response
+    response = RedirectResponse(end_session_url(id_token), status_code=303)
     response.delete_cookie("session", path="/")
     return response
 

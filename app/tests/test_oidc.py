@@ -5,7 +5,8 @@ from unittest.mock import patch
 
 from fastapi import HTTPException
 
-from src.oidc import OIDCConfig, _backchannel_endpoint, begin_authorization, complete_authorization, is_user_authorized
+from src.auth import create_session, get_session_id_token, get_session_user_id
+from src.oidc import OIDCConfig, _backchannel_endpoint, begin_authorization, complete_authorization, end_session_url, is_user_authorized
 
 
 class OIDCFlowTests(unittest.TestCase):
@@ -63,6 +64,20 @@ class OIDCFlowTests(unittest.TestCase):
         get_json.assert_called_once_with(
             "http://identity:8080/internal/applications/olftransfer/authorizations/user%2Fid"
         )
+
+    @patch("src.oidc._get_json", return_value={"end_session_endpoint": "https://auth.example.test/logout"})
+    def test_logout_uses_registered_rp_initiated_logout_parameters(self, _get_json):
+        parsed = urllib.parse.urlparse(end_session_url("signed.id.token"))
+        query = urllib.parse.parse_qs(parsed.query)
+        self.assertEqual(parsed.scheme + "://" + parsed.netloc + parsed.path, "https://auth.example.test/logout")
+        self.assertEqual(query["id_token_hint"], ["signed.id.token"])
+        self.assertEqual(query["client_id"], ["olftransfer"])
+        self.assertEqual(query["post_logout_redirect_uri"], ["https://olf.example.test/auth/logout?logged_out=1"])
+
+    def test_local_session_retains_id_token_for_federated_logout(self):
+        session = create_session("user-1", "signed.id.token")
+        self.assertEqual(get_session_user_id(session), "user-1")
+        self.assertEqual(get_session_id_token(session), "signed.id.token")
 
 
 if __name__ == "__main__":
