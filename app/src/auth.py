@@ -89,9 +89,14 @@ def get_current_user(
     session: str | None = Cookie(default=None),
     x_api_key: str | None = Header(default=None, alias="X-Api-Key"),
 ) -> dict:
-    # API key auth (for service accounts like liveslide)
-    expected_key = os.environ.get("LIVESLIDE_API_KEY")
-    if x_api_key and expected_key and x_api_key == expected_key:
+    # API key auth for trusted first-party services.
+    service_keys = {
+        key for key in (
+            os.environ.get("LIVESLIDE_API_KEY"),
+            os.environ.get("CLASSE_API_KEY"),
+        ) if key
+    }
+    if x_api_key and any(hmac.compare_digest(x_api_key, key) for key in service_keys):
         with get_conn() as conn:
             cur = conn.cursor()
             cur.execute("SELECT id, email, pseudonym, is_admin, storage_quota_bytes FROM users WHERE is_admin = TRUE LIMIT 1")
