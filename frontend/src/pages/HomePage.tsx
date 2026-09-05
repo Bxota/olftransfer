@@ -1,5 +1,6 @@
 import { ChangeEvent, DragEvent, MouseEvent, useEffect, useRef, useState } from 'react'
 import { Link, useNavigate } from 'react-router-dom'
+import { AnimatePresence, motion } from 'motion/react'
 import { useAuth } from '../App'
 import { QrPopover } from '../components/QrPopover'
 import ReceivePage from './ReceivePage'
@@ -13,6 +14,9 @@ import DownloadIcon from '../icons/download-icon'
 import TrashIcon from '../icons/trash-icon'
 import RefreshIcon from '../icons/refresh-icon'
 import type { AnimatedIconHandle } from '../icons/types'
+import { Button } from '@/components/ui/button'
+import { Input } from '@/components/ui/input'
+import { ScrollArea } from '@/components/ui/scroll-area'
 import { formatBytes, formatSize, formatDate, getExt, getStem, getFileCategory, runWithConcurrency, FileCategory } from '../lib/utils'
 import { CHUNK_SIZE, UPLOAD_CONCURRENCY, MultipartEndpoints, uploadMultipart, uploadSingle } from '../lib/upload'
 import { PreviewModal, PreviewKind } from '../components/PreviewModal'
@@ -182,7 +186,7 @@ export default function HomePage() {
   const [history, setHistory] = useState<HistoryTransfer[]>([])
   const [selectedTokens, setSelectedTokens] = useState<Set<string>>(new Set())
   const [historySearch, setHistorySearch] = useState('')
-  const [archiveOpen, setArchiveOpen] = useState(false)
+  const [archiveOpen, setArchiveOpen] = useState(true)
 
   // Preview modal
   const [previewFile, setPreviewFile] = useState<File | null>(null)
@@ -638,8 +642,26 @@ export default function HomePage() {
         </div>
       )}
 
-      <main className="page app-main">
-        <div className="page-narrow">
+      <main className="page app-main home-workspace">
+        <div className="workspace-shell">
+        <div className="workspace-toolbar">
+          <div className="mode-toggle" aria-label="Type de transfert">
+            <button className={`mode-toggle-btn${mode === 'send' ? ' active' : ''}`} onClick={() => setMode('send')}>
+              <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" aria-hidden="true">
+                <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" /><polyline points="17 8 12 3 7 8" /><line x1="12" y1="3" x2="12" y2="15" />
+              </svg>
+              Envoyer
+            </button>
+            <button className={`mode-toggle-btn${mode === 'receive' ? ' active' : ''}`} onClick={() => setMode('receive')}>
+              <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" aria-hidden="true">
+                <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" /><polyline points="7 10 12 15 17 10" /><line x1="12" y1="15" x2="12" y2="3" />
+              </svg>
+              Recevoir
+            </button>
+          </div>
+        </div>
+        <div className="workspace-grid">
+        <section className="workspace-compose" aria-label="Créer un transfert">
 
           {resumeBanner.show && (
             <div style={{ marginBottom: 16 }}>
@@ -677,34 +699,28 @@ export default function HomePage() {
             </div>
           )}
 
-          <div className="drop-hint">
-            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="var(--primary)" strokeWidth="2.5">
-              <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" />
-              <polyline points="17 8 12 3 7 8" />
-              <line x1="12" y1="3" x2="12" y2="15" />
-            </svg>
-            Glissez des fichiers n'importe où sur la page
-          </div>
-
-          <div className="mode-toggle">
-            <button className={`mode-toggle-btn${mode === 'send' ? ' active' : ''}`} onClick={() => setMode('send')}>
-              <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" style={{ marginRight: 6, verticalAlign: 'middle' }}>
-                <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" /><polyline points="17 8 12 3 7 8" /><line x1="12" y1="3" x2="12" y2="15" />
-              </svg>
-              Envoyer
-            </button>
-            <button className={`mode-toggle-btn${mode === 'receive' ? ' active' : ''}`} onClick={() => setMode('receive')}>
-              <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" style={{ marginRight: 6, verticalAlign: 'middle' }}>
-                <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" /><polyline points="7 10 12 15 17 10" /><line x1="12" y1="15" x2="12" y2="3" />
-              </svg>
-              Recevoir
-            </button>
-          </div>
-
-          {mode === 'receive' && <ReceivePage />}
+          <AnimatePresence mode="wait" initial={false}>
+          {mode === 'receive' && (
+            <motion.div
+              key="receive"
+              initial={{ opacity: 0, y: 10 }}
+              animate={{ opacity: 1, y: 0 }}
+              exit={{ opacity: 0, y: -6 }}
+              transition={{ duration: 0.22, ease: [0.22, 1, 0.36, 1] }}
+            >
+              <ReceivePage />
+            </motion.div>
+          )}
 
           {mode === 'send' && !hasFiles && (
-            <div className="card">
+            <motion.div
+              key="send-empty"
+              className="card upload-card"
+              initial={{ opacity: 0, y: 10, scale: 0.992 }}
+              animate={{ opacity: 1, y: 0, scale: 1 }}
+              exit={{ opacity: 0, y: -6, scale: 0.992 }}
+              transition={{ duration: 0.24, ease: [0.22, 1, 0.36, 1] }}
+            >
               <div className="card-body">
                 <div
                   className="dropzone"
@@ -717,18 +733,29 @@ export default function HomePage() {
                     onChange={(e: ChangeEvent<HTMLInputElement>) => {
                       if (e.target.files) { handleNewFiles([...e.target.files]); e.target.value = '' }
                     }} />
-                  <div className="dropzone-icon">
-                    <UploadIcon ref={uploadIconRef} size={40} strokeWidth={1.5} disableHover />
+                  <div className="upload-prompt">
+                    <span className="upload-prompt-icon" aria-hidden="true">
+                      <UploadIcon ref={uploadIconRef} size={34} strokeWidth={1.65} disableHover />
+                    </span>
+                    <div>
+                      <h2>Déposez vos fichiers</h2>
+                      <p>Glissez-les ou <span className="browse">parcourez votre ordinateur</span></p>
+                    </div>
                   </div>
-                  <h2>Déposer vos fichiers ici</h2>
-                  <p>ou <span className="browse">parcourir</span> depuis votre appareil</p>
                 </div>
               </div>
-            </div>
+            </motion.div>
           )}
 
           {mode === 'send' && hasFiles && (
-            <div className="card share-card">
+            <motion.div
+              key="send-files"
+              className="card share-card"
+              initial={{ opacity: 0, y: 12, scale: 0.992 }}
+              animate={{ opacity: 1, y: 0, scale: 1 }}
+              exit={{ opacity: 0, y: -6, scale: 0.992 }}
+              transition={{ duration: 0.28, ease: [0.22, 1, 0.36, 1] }}
+            >
               <div className="share-card-header">
                 <div className="share-card-status">
                   {(creating || uploading) && <div className="pulse-dot" />}
@@ -875,11 +902,12 @@ export default function HomePage() {
 
                 {sendError && <div className="alert alert-error mt-3">{sendError}</div>}
               </div>
-            </div>
+            </motion.div>
           )}
-        </div>
+          </AnimatePresence>
+        </section>
 
-        <div className="page-narrow" style={{ marginTop: 28 }}>
+        <section className="workspace-history" aria-label="Historique des transferts">
           <div className="card">
             {/* En-tête : titre + QuotaBar dégradée */}
             <div className="history-header">
@@ -895,15 +923,45 @@ export default function HomePage() {
             </div>
 
             {/* Barre de recherche */}
-            <div className="history-search-bar">
-              <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="#9aa0aa" strokeWidth="2.5">
+            <div className={`history-search-bar${historySearch ? ' has-value' : ''}`}>
+              <motion.svg
+                width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5"
+                animate={{ scale: historySearch ? 1.08 : 1, rotate: historySearch ? -8 : 0 }}
+                transition={{ type: 'spring', stiffness: 420, damping: 24 }}
+                aria-hidden="true"
+              >
                 <circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/>
-              </svg>
-              <input
+              </motion.svg>
+              <Input
+                className="history-search-input"
                 placeholder="Rechercher un transfert…"
                 value={historySearch}
                 onChange={e => setHistorySearch(e.target.value)}
               />
+              <AnimatePresence initial={false}>
+                {historySearch && (
+                  <motion.div
+                    className="history-search-clear-motion"
+                    initial={{ opacity: 0, scale: .7, rotate: -35 }}
+                    animate={{ opacity: 1, scale: 1, rotate: 0 }}
+                    exit={{ opacity: 0, scale: .7, rotate: 35 }}
+                    transition={{ duration: .16 }}
+                  >
+                    <Button
+                      type="button"
+                      variant="ghost"
+                      size="icon-sm"
+                      className="history-search-clear"
+                      aria-label="Effacer la recherche"
+                      onClick={() => setHistorySearch('')}
+                    >
+                      <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.4">
+                        <path d="m6 6 12 12M18 6 6 18" />
+                      </svg>
+                    </Button>
+                  </motion.div>
+                )}
+              </AnimatePresence>
             </div>
 
             {/* Barre d'actions groupées */}
@@ -943,8 +1001,12 @@ export default function HomePage() {
             )}
 
             {history.length === 0 && (
-              <div style={{ padding: '20px', color: 'var(--subtext)', fontSize: 13, textAlign: 'center' }}>
-                Aucun transfert pour le moment.
+              <div className="history-empty">
+                <span className="history-empty-mark" aria-hidden="true">
+                  <UploadIcon size={20} strokeWidth={1.8} />
+                </span>
+                <strong>Aucun transfert pour le moment</strong>
+                <span>Les liens que vous créez apparaîtront ici.</span>
               </div>
             )}
 
@@ -965,12 +1027,17 @@ export default function HomePage() {
               const now = Date.now()
 
               return (
-                <>
+                <div className="history-groups">
                   {active.length > 0 && (
-                    <>
+                    <section
+                      className="history-list-section history-list-section--active"
+                      aria-label="Transferts actifs"
+                      style={{ height: `${36 + active.length * 61}px` }}
+                    >
                       <div className="history-group-header">
                         Actifs <span className="history-group-count">{active.length}</span>
                       </div>
+                      <ScrollArea className="history-scroll-area history-scroll-area--active">
                       {active.map(t => {
                         const filenames = t.files.map(f => f.filename).join(', ')
                         const displayName = t.name || filenames
@@ -1013,11 +1080,12 @@ export default function HomePage() {
                           </div>
                         )
                       })}
-                    </>
+                      </ScrollArea>
+                    </section>
                   )}
 
                   {archived.length > 0 && (
-                    <>
+                    <section className="history-list-section history-list-section--archived" aria-label="Transferts archivés">
                       <button className="archive-toggle" onClick={() => setArchiveOpen(o => !o)}>
                         <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
                           <polyline points="21 8 21 21 3 21 3 8"/><rect x="1" y="3" width="22" height="5"/><line x1="10" y1="12" x2="14" y2="12"/>
@@ -1029,7 +1097,7 @@ export default function HomePage() {
                       </button>
 
                       {archiveOpen && (
-                        <>
+                        <ScrollArea className="history-scroll-area history-scroll-area--archived">
                           {archived.map(t => {
                             const filenames = t.files.map(f => f.filename).join(', ')
                             const displayName = t.name || filenames
@@ -1076,14 +1144,16 @@ export default function HomePage() {
                             )
                           })}
                           <div className="archive-footer">Conservés en stockage froid — Relancer les remet en ligne</div>
-                        </>
+                        </ScrollArea>
                       )}
-                    </>
+                    </section>
                   )}
-                </>
+                </div>
               )
             })()}
           </div>
+        </section>
+        </div>
         </div>
       </main>
 

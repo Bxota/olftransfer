@@ -72,10 +72,12 @@ from .models import (
 )
 from .oidc import (
     TRANSACTION_COOKIE,
+    TRANSACTION_FALLBACK_COOKIE,
     begin_authorization,
     complete_authorization,
     end_session_url,
     find_or_create_user,
+    transaction_from_cookies,
 )
 from .oidc import (
     config as oidc_config,
@@ -404,15 +406,16 @@ def oidc_login(prompt: str = Query(default="")):
         raise HTTPException(status_code=400, detail="Paramètre prompt non pris en charge")
     authorization_url, transaction = begin_authorization(prompt)
     response = RedirectResponse(authorization_url, status_code=302)
-    response.set_cookie(
-        TRANSACTION_COOKIE,
-        transaction,
-        httponly=True,
-        secure=True,
-        samesite="lax",
-        max_age=10 * 60,
-        path="/",
-    )
+    for cookie_name in (TRANSACTION_COOKIE, TRANSACTION_FALLBACK_COOKIE):
+        response.set_cookie(
+            cookie_name,
+            transaction,
+            httponly=True,
+            secure=True,
+            samesite="lax",
+            max_age=10 * 60,
+            path="/",
+        )
     return response
 
 
@@ -440,12 +443,20 @@ def oidc_callback(
     if error:
         location = "/login?error=access_denied" if error == "access_denied" else "/login?error=oidc"
         response = RedirectResponse(location, status_code=303)
-        response.delete_cookie(TRANSACTION_COOKIE, path="/", secure=True, httponly=True, samesite="lax")
+        for cookie_name in (TRANSACTION_COOKIE, TRANSACTION_FALLBACK_COOKIE):
+            response.delete_cookie(cookie_name, path="/", secure=True, httponly=True, samesite="lax")
         return response
-    result = complete_authorization(code, state, request.cookies.get(TRANSACTION_COOKIE))
+    try:
+        result = complete_authorization(code, state, transaction_from_cookies(request.cookies))
+    except HTTPException:
+        response = RedirectResponse("/login?error=oidc", status_code=303)
+        for cookie_name in (TRANSACTION_COOKIE, TRANSACTION_FALLBACK_COOKIE):
+            response.delete_cookie(cookie_name, path="/", secure=True, httponly=True, samesite="lax")
+        return response
     user_id = find_or_create_user(result.claims)
     response = RedirectResponse("/", status_code=303)
-    response.delete_cookie(TRANSACTION_COOKIE, path="/", secure=True, httponly=True, samesite="lax")
+    for cookie_name in (TRANSACTION_COOKIE, TRANSACTION_FALLBACK_COOKIE):
+        response.delete_cookie(cookie_name, path="/", secure=True, httponly=True, samesite="lax")
     response.set_cookie(
         "session",
         create_session(user_id, result.id_token),

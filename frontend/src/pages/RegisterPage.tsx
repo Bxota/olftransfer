@@ -58,7 +58,7 @@ export default function RegisterPage() {
   }
 
   return (
-    <div className="login-wrap">
+    <main className="login-wrap auth-surface">
       <div className="login-card">
         <div className="login-logo">
           <div className="logo-icon">
@@ -117,6 +117,6 @@ export default function RegisterPage() {
           </>
         )}
       </div>
-    </div>
+    </main>
   )
 }

@@ -8,6 +8,7 @@ import urllib.error
 import urllib.parse
 import urllib.request
 from dataclasses import dataclass
+from typing import Mapping
 
 import jwt
 from fastapi import HTTPException
@@ -17,6 +18,12 @@ from .db import get_conn
 
 TRANSACTION_MAX_AGE = 10 * 60
 TRANSACTION_COOKIE = "__Host-olf_oidc_transaction"
+TRANSACTION_FALLBACK_COOKIE = "olf_oidc_transaction"
+
+
+def transaction_from_cookies(cookies: Mapping[str, str]) -> str | None:
+    """Prefer the browser-enforced __Host cookie, with a secure proxy fallback."""
+    return cookies.get(TRANSACTION_COOKIE) or cookies.get(TRANSACTION_FALLBACK_COOKIE)
 
 
 @dataclass(frozen=True)

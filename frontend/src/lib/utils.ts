@@ -1,3 +1,10 @@
+import { clsx, type ClassValue } from "clsx"
+import { twMerge } from "tailwind-merge"
+
+export function cn(...inputs: ClassValue[]) {
+  return twMerge(clsx(inputs))
+}
+
 export function formatBytes(b: number): string {
   if (b === 0) return '0 o'
   const u = ['o', 'Ko', 'Mo', 'Go', 'To']

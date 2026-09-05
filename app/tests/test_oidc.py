@@ -6,7 +6,17 @@ from unittest.mock import patch
 from fastapi import HTTPException
 
 from src.auth import create_session, get_session_id_token, get_session_user_id
-from src.oidc import OIDCConfig, _backchannel_endpoint, begin_authorization, complete_authorization, end_session_url, is_user_authorized
+from src.oidc import (
+    OIDCConfig,
+    TRANSACTION_COOKIE,
+    TRANSACTION_FALLBACK_COOKIE,
+    _backchannel_endpoint,
+    begin_authorization,
+    complete_authorization,
+    end_session_url,
+    is_user_authorized,
+    transaction_from_cookies,
+)
 
 
 class OIDCFlowTests(unittest.TestCase):
@@ -45,6 +55,19 @@ class OIDCFlowTests(unittest.TestCase):
         with self.assertRaises(HTTPException) as raised:
             complete_authorization("code", "attacker-state", transaction)
         self.assertEqual(raised.exception.status_code, 400)
+
+    def test_transaction_cookie_uses_secure_fallback_when_host_cookie_is_missing(self):
+        self.assertEqual(
+            transaction_from_cookies({TRANSACTION_FALLBACK_COOKIE: "fallback-transaction"}),
+            "fallback-transaction",
+        )
+        self.assertEqual(
+            transaction_from_cookies({
+                TRANSACTION_COOKIE: "host-transaction",
+                TRANSACTION_FALLBACK_COOKIE: "fallback-transaction",
+            }),
+            "host-transaction",
+        )
 
     def test_backchannel_keeps_only_endpoints_from_the_issuer(self):
         cfg = OIDCConfig(

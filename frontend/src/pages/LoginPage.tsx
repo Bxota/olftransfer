@@ -12,7 +12,7 @@ export default function LoginPage() {
 
   if (loggedOut) {
     return (
-      <main className="login-wrap">
+      <main className="login-wrap auth-surface">
         <section className="login-card">
           <p className="section-label">Déconnexion</p>
           <h1 className="login-title">Vous êtes déconnecté</h1>
@@ -24,7 +24,7 @@ export default function LoginPage() {
 
   if (error === 'access_denied') {
     return (
-      <main className="login-wrap">
+      <main className="login-wrap auth-surface">
         <section className="login-card" aria-labelledby="access-denied-title">
           <p className="section-label">Accès non autorisé</p>
           <h1 id="access-denied-title" className="login-title">Votre compte n’a pas accès à OlfTransfer</h1>
@@ -37,7 +37,7 @@ export default function LoginPage() {
 
   if (error === 'oidc') {
     return (
-      <main className="login-wrap">
+      <main className="login-wrap auth-surface">
         <section className="login-card" aria-labelledby="connection-error-title">
           <p className="section-label">Connexion interrompue</p>
           <h1 id="connection-error-title" className="login-title">La connexion avec Passerelle n’a pas abouti</h1>
@@ -49,6 +49,6 @@ export default function LoginPage() {
   }
 
   return (
-    <main className="login-wrap" aria-live="polite"><p>Redirection vers Passerelle…</p></main>
+    <main className="login-wrap auth-surface" aria-live="polite"><p>Redirection vers Passerelle…</p></main>
   )
 }

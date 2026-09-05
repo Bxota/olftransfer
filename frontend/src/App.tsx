@@ -6,6 +6,7 @@ import HomePage from './pages/HomePage'
 import TransferPage from './pages/TransferPage'
 import AdminPage from './pages/AdminPage'
 import RequestDropPage from './pages/RequestDropPage'
+import NotFoundPage from './pages/NotFoundPage'
 
 export interface User {
   email: string
@@ -110,6 +111,7 @@ export default function App() {
               </ProtectedRoute>
             }
           />
+          <Route path="*" element={<NotFoundPage />} />
         </Routes>
       </AuthProvider>
     </BrowserRouter>

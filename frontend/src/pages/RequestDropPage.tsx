@@ -133,7 +133,7 @@ export default function RequestDropPage() {
 
   return (
     <>
-      <header className="header">
+      <header className="header public-header">
         <Link to="/" className="logo">
           <div className="logo-icon">
             <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5">
@@ -146,7 +146,7 @@ export default function RequestDropPage() {
         </Link>
       </header>
 
-      <main className="page">
+      <main className="page public-surface request-drop-page">
         <div className="page-narrow">
           {state === 'loading' && <div className="text-center text-subtext">Chargement…</div>}
 

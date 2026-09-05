@@ -51,7 +51,7 @@ export default function ReceivePage({ onCreated }: ReceivePageProps) {
 
   if (created) {
     return (
-      <div className="card">
+      <div className="card receive-card">
         <div className="share-card-header">
           <div className="share-card-status">
             <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#0F766E" strokeWidth="2.5">
@@ -78,7 +78,7 @@ export default function ReceivePage({ onCreated }: ReceivePageProps) {
   }
 
   return (
-    <div className="card">
+    <div className="card receive-card">
       <div className="card-body">
         <h2 style={{ fontSize: 16, fontWeight: 700, marginBottom: 4 }}>Demander des fichiers</h2>
         <p style={{ fontSize: 13, color: 'var(--subtext)', marginBottom: 20 }}>

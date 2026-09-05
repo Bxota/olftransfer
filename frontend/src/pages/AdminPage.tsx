@@ -101,7 +101,7 @@ export default function AdminPage() {
     <>
       <AppNavigation />
 
-      <main className="page app-main">
+      <main className="page app-main app-surface admin-surface">
         <div className="page-admin">
           <div className="admin-grid">
             {/* Invite */}
