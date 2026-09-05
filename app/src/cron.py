@@ -3,6 +3,7 @@ import logging
 from apscheduler.schedulers.background import BackgroundScheduler
 
 from .db import get_conn
+from .email import send_download_notification
 from .storage import (
     abort_multipart_upload,
     archive_objects,
@@ -13,6 +14,8 @@ from .storage import (
 
 logger = logging.getLogger(__name__)
 scheduler = BackgroundScheduler()
+EMAIL_BATCH_SIZE = 20
+EMAIL_MAX_ATTEMPTS = 5
 
 
 @scheduler.scheduled_job("interval", hours=1, id="cleanup_expired")
@@ -30,6 +33,87 @@ def check_restoring():
         _do_check_restoring()
     except Exception as exc:
         logger.warning("Restore check skipped: %s", exc)
+
+
+@scheduler.scheduled_job("interval", seconds=30, id="send_download_notifications", max_instances=1, coalesce=True)
+def send_download_notifications():
+    try:
+        _do_send_download_notifications()
+    except Exception:
+        logger.exception("Email outbox processing failed")
+
+
+def _do_send_download_notifications():
+    """Claims pending jobs, sends outside DB transactions, and retries failures."""
+    with get_conn() as conn:
+        cur = conn.cursor()
+        # A process crash between claiming and sending is recoverable.
+        cur.execute(
+            """
+            UPDATE email_outbox
+            SET status = 'pending', claimed_at = NULL
+            WHERE status = 'sending' AND claimed_at < NOW() - INTERVAL '5 minutes'
+            """
+        )
+        cur.execute(
+            """
+            SELECT id FROM email_outbox
+            WHERE status = 'pending' AND available_at <= NOW()
+            ORDER BY created_at
+            FOR UPDATE SKIP LOCKED
+            LIMIT %s
+            """,
+            (EMAIL_BATCH_SIZE,),
+        )
+        job_ids = [row[0] for row in cur.fetchall()]
+        if job_ids:
+            cur.execute(
+                """
+                UPDATE email_outbox
+                SET status = 'sending', claimed_at = NOW(), attempts = attempts + 1
+                WHERE id = ANY(%s::uuid[])
+                RETURNING id, recipient_email, token, transfer_name, filenames,
+                          total_bytes, downloader_email, attempts
+                """,
+                (job_ids,),
+            )
+            jobs = cur.fetchall()
+        else:
+            jobs = []
+
+    for job_id, recipient, token, transfer_name, filenames, total_bytes, downloader, attempts in jobs:
+        try:
+            send_download_notification(
+                recipient, token, transfer_name, filenames, total_bytes, downloader
+            )
+        except Exception as exc:
+            delay = min(60 * (2 ** (attempts - 1)), 3600)
+            status = 'failed' if attempts >= EMAIL_MAX_ATTEMPTS else 'pending'
+            with get_conn() as conn:
+                cur = conn.cursor()
+                cur.execute(
+                    """
+                    UPDATE email_outbox
+                    SET status = %s,
+                        available_at = NOW() + (%s * INTERVAL '1 second'),
+                        claimed_at = NULL,
+                        last_error = %s
+                    WHERE id = %s
+                    """,
+                    (status, delay, str(exc)[:2000], job_id),
+                )
+            logger.warning("Download notification %s failed (attempt %s/%s)", job_id, attempts, EMAIL_MAX_ATTEMPTS)
+        else:
+            with get_conn() as conn:
+                cur = conn.cursor()
+                cur.execute(
+                    """
+                    UPDATE email_outbox
+                    SET status = 'sent', sent_at = NOW(), claimed_at = NULL, last_error = NULL
+                    WHERE id = %s
+                    """,
+                    (job_id,),
+                )
 
 
 def _do_cleanup():

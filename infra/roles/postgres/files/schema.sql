@@ -79,6 +79,41 @@ BEGIN
     END IF;
 END $$;
 
+-- Outbox durable : les emails sont créés avec l'événement de téléchargement,
+-- puis expédiés et rejoués indépendamment de la réponse HTTP.
+CREATE TABLE IF NOT EXISTS email_outbox (
+    id               UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    transfer_id      UUID NOT NULL REFERENCES transfers(id) ON DELETE CASCADE,
+    recipient_email  VARCHAR NOT NULL,
+    token            VARCHAR(64) NOT NULL,
+    transfer_name    VARCHAR(100),
+    filenames        JSONB NOT NULL,
+    total_bytes      BIGINT NOT NULL,
+    downloader_email VARCHAR,
+    status           VARCHAR(16) NOT NULL DEFAULT 'pending'
+                     CHECK (status IN ('pending', 'sending', 'sent', 'failed')),
+    attempts         INT NOT NULL DEFAULT 0,
+    available_at     TIMESTAMP NOT NULL DEFAULT NOW(),
+    claimed_at       TIMESTAMP,
+    sent_at          TIMESTAMP,
+    last_error       TEXT,
+    created_at       TIMESTAMP NOT NULL DEFAULT NOW()
+);
+
+CREATE INDEX IF NOT EXISTS idx_email_outbox_pending
+    ON email_outbox (available_at, created_at)
+    WHERE status = 'pending';
+
+DO $$
+BEGIN
+    IF NOT EXISTS (
+        SELECT 1 FROM information_schema.columns
+        WHERE table_name = 'transfers' AND column_name = 'last_notification_enqueued_at'
+    ) THEN
+        ALTER TABLE transfers ADD COLUMN last_notification_enqueued_at TIMESTAMP;
+    END IF;
+END $$;
+
 -- Migration : ajouter files_purged_at pour conserver l'historique après expiration
 DO $$
 BEGIN

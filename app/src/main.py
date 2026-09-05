@@ -14,6 +14,7 @@ from fastapi.responses import FileResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
 from itsdangerous import BadSignature, SignatureExpired, URLSafeTimedSerializer
 from PIL import Image, ImageOps, UnidentifiedImageError
+from psycopg2.extras import Json
 from starlette.background import BackgroundTask
 
 from .auth import (
@@ -27,9 +28,9 @@ from .auth import (
     seed_admin,
     verify_password,
 )
-from .cron import _do_cleanup, _do_cleanup_abandoned, cleanup_expired, scheduler
+from .cron import _do_cleanup, _do_cleanup_abandoned, cleanup_expired, scheduler, send_download_notifications
 from .db import apply_schema, get_conn
-from .email import send_download_notification, send_invite
+from .email import send_invite
 from .models import (
     AbortUploadRequest,
     AddFilesRequest,
@@ -126,6 +127,7 @@ async def lifespan(app: FastAPI):
     seed_admin()
     scheduler.start()
     cleanup_expired()
+    send_download_notifications()
     yield
     scheduler.shutdown()
 
@@ -232,9 +234,8 @@ def _verify_pending_files(cur, transfer_id) -> None:
 def _download_file_rows(
     token: str,
     password: str | None,
-    notify: bool = True,
     max_total_size: int | None = None,
-    consume_download: bool = True,
+    enforce_download_limit: bool = True,
 ):
     with get_conn() as conn:
         cur = conn.cursor()
@@ -259,7 +260,7 @@ def _download_file_rows(
         if expires_at.replace(tzinfo=UTC) < datetime.now(UTC):
             raise HTTPException(status_code=410, detail="Transfer expired")
 
-        if consume_download and max_downloads and download_count >= max_downloads:
+        if enforce_download_limit and max_downloads and download_count >= max_downloads:
             raise HTTPException(status_code=410, detail="Download limit reached")
 
         _verify_and_upgrade_password(cur, transfer_id, password, password_hash)
@@ -283,27 +284,66 @@ def _download_file_rows(
                 ),
             )
 
-        if consume_download:
-            cur.execute(
-                "UPDATE transfers SET download_count = download_count + 1 WHERE id = %s",
-                (transfer_id,),
-            )
+    return rows, transfer_id, sender_email, transfer_name
 
-        # Throttle : au plus une notification mail par transfert toutes les 5 minutes
-        # (UPDATE atomique pour éviter les doublons entre requêtes concurrentes).
-        should_notify = False
-        if notify and consume_download:
+
+def _record_download_and_enqueue_notification(
+    transfer_id,
+    recipient_email: str,
+    token: str,
+    transfer_name: str | None,
+    rows,
+    downloader_email: str | None,
+) -> None:
+    """Atomically records a download and persists its eventual email notification."""
+    filenames = [row[0] for row in rows]
+    total_bytes = sum(row[1] for row in rows)
+
+    with get_conn() as conn:
+        cur = conn.cursor()
+        cur.execute(
+            """
+            UPDATE transfers
+            SET download_count = download_count + 1
+            WHERE id = %s AND (max_downloads IS NULL OR download_count < max_downloads)
+            RETURNING id
+            """,
+            (transfer_id,),
+        )
+        if cur.fetchone() is None:
+            raise HTTPException(status_code=410, detail="Download limit reached")
+
+        # A pending job is retried by the worker, so reserving this window can no
+        # longer silently lose a notification when SMTP or the app process fails.
+        cur.execute(
+            """
+            UPDATE transfers SET last_notification_enqueued_at = NOW()
+            WHERE id = %s AND (
+                last_notification_enqueued_at IS NULL
+                OR last_notification_enqueued_at < NOW() - INTERVAL '5 minutes'
+            )
+            RETURNING id
+            """,
+            (transfer_id,),
+        )
+        if cur.fetchone() is not None:
             cur.execute(
                 """
-                UPDATE transfers SET last_notified_at = NOW()
-                WHERE id = %s AND (last_notified_at IS NULL OR last_notified_at < NOW() - INTERVAL '5 minutes')
-                RETURNING id
+                INSERT INTO email_outbox (
+                    transfer_id, recipient_email, token, transfer_name, filenames,
+                    total_bytes, downloader_email
+                ) VALUES (%s, %s, %s, %s, %s, %s, %s)
                 """,
-                (transfer_id,),
+                (
+                    transfer_id,
+                    recipient_email,
+                    token,
+                    transfer_name,
+                    Json(filenames),
+                    total_bytes,
+                    downloader_email,
+                ),
             )
-            should_notify = cur.fetchone() is not None
-
-    return rows, sender_email, transfer_name, should_notify
 
 
 def _zip_entry_name(filename: str, used_names: set[str]) -> str:
@@ -330,7 +370,7 @@ def _build_transfer_zip(rows) -> str:
 
     try:
         with zipfile.ZipFile(zip_path, mode="w") as archive:
-            for filename, _, object_key in rows:
+            for filename, _, object_key, _ in rows:
                 archive_name = _zip_entry_name(filename, used_names)
                 response = get_client().get_object(Bucket=bucket_name, Key=object_key)
                 body = response["Body"]
@@ -1173,24 +1213,27 @@ def get_transfer(token: str, password: str | None = Query(default=None)):
 
 @app.get("/transfers/{token}/download", tags=["Transfers"], summary="Obtenir les URLs de téléchargement", response_model=DownloadResponse)
 def download_transfer(token: str, password: str | None = Query(default=None, description="Mot de passe si le transfert est protégé"), inline: bool = Query(default=False, description="Si True, renvoie des URLs inline (aperçu) au lieu de attachment"), downloader: dict | None = Depends(get_optional_user)):
-    rows, sender_email, transfer_name, should_notify = _download_file_rows(
+    rows, transfer_id, sender_email, transfer_name = _download_file_rows(
         token,
         password,
-        notify=not inline,
-        consume_download=not inline,
     )
 
-    total_bytes = sum(r[1] for r in rows)
-    filenames = [r[0] for r in rows]
     downloader_email = downloader["email"] if downloader else None
-    background = BackgroundTask(send_download_notification, sender_email, token, transfer_name, filenames, total_bytes, downloader_email) if should_notify else None
+    files = [
+        DownloadUrl(
+            filename=row[0],
+            size_bytes=row[1],
+            download_url=presigned_download_url(row[2], row[0], inline=inline),
+        )
+        for row in rows
+    ]
+    if not inline:
+        _record_download_and_enqueue_notification(
+            transfer_id, sender_email, token, transfer_name, rows, downloader_email
+        )
     return Response(
-        content=DownloadResponse(files=[
-            DownloadUrl(filename=r[0], size_bytes=r[1], download_url=presigned_download_url(r[2], r[0], inline=inline))
-            for r in rows
-        ]).model_dump_json(),
+        content=DownloadResponse(files=files).model_dump_json(),
         media_type="application/json",
-        background=background,
     )
 
 
@@ -1202,8 +1245,7 @@ def preview_transfer(
     rows, _, _, _ = _download_file_rows(
         token,
         password,
-        notify=False,
-        consume_download=False,
+        enforce_download_limit=False,
     )
     return DownloadResponse(files=[
         DownloadUrl(
@@ -1266,7 +1308,7 @@ def transfer_thumbnail(token: str, file_id: str, signature: str = Query(...)):
 
 @app.get("/transfers/{token}/download-zip", tags=["Transfers"], summary="Télécharger tous les fichiers en ZIP")
 def download_transfer_zip(token: str, password: str | None = Query(default=None, description="Mot de passe si le transfert est protégé"), downloader: dict | None = Depends(get_optional_user)):
-    rows, sender_email, transfer_name, should_notify = _download_file_rows(
+    rows, transfer_id, sender_email, transfer_name = _download_file_rows(
         token,
         password,
         max_total_size=MAX_ZIP_SIZE_BYTES,
@@ -1275,21 +1317,25 @@ def download_transfer_zip(token: str, password: str | None = Query(default=None,
     if len(rows) <= 1:
         raise HTTPException(status_code=400, detail="Zip download requires at least 2 files")
 
-    total_bytes = sum(r[1] for r in rows)
-    filenames = [r[0] for r in rows]
     downloader_email = downloader["email"] if downloader else None
     zip_path = _build_transfer_zip(rows)
 
-    def _cleanup_and_notify(path: str):
+    try:
+        _record_download_and_enqueue_notification(
+            transfer_id, sender_email, token, transfer_name, rows, downloader_email
+        )
+    except Exception:
+        _cleanup_file(zip_path)
+        raise
+
+    def _cleanup(path: str):
         _cleanup_file(path)
-        if should_notify:
-            send_download_notification(sender_email, token, transfer_name, filenames, total_bytes, downloader_email)
 
     return FileResponse(
         zip_path,
         media_type="application/zip",
         filename=f"{transfer_name}.zip" if transfer_name else f"{token}.zip",
-        background=BackgroundTask(_cleanup_and_notify, zip_path),
+        background=BackgroundTask(_cleanup, zip_path),
     )
 
 

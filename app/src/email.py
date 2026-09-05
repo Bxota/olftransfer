@@ -10,10 +10,11 @@ logger = logging.getLogger(__name__)
 def _send(msg: MIMEMultipart) -> None:
     smtp_host = os.environ["SMTP_HOST"]
     smtp_port = int(os.environ.get("SMTP_PORT", "587"))
+    smtp_timeout = float(os.environ.get("SMTP_TIMEOUT_SECONDS", "15"))
     smtp_user = os.environ.get("SMTP_USER", "")
     smtp_password = os.environ.get("SMTP_PASSWORD", "")
 
-    with smtplib.SMTP(smtp_host, smtp_port) as server:
+    with smtplib.SMTP(smtp_host, smtp_port, timeout=smtp_timeout) as server:
         server.ehlo()
         server.starttls()
         if smtp_user:
@@ -70,10 +71,7 @@ def send_download_notification(to_email: str, token: str, transfer_name: str | N
     msg.attach(MIMEText(text, "plain"))
     msg.attach(MIMEText(html, "html"))
 
-    try:
-        _send(msg)
-    except Exception:
-        logger.exception("Failed to send download notification to %s (token=%s)", to_email, token)
+    _send(msg)
 
 
 def send_invite(to_email: str, invite_url: str, invited_by: str):
