@@ -7,8 +7,8 @@ import secrets
 import urllib.error
 import urllib.parse
 import urllib.request
+from collections.abc import Mapping
 from dataclasses import dataclass
-from typing import Mapping
 
 import jwt
 from fastapi import HTTPException
